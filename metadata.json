@@ -1,0 +1,5 @@
+{
+  "name": "Nano Banana Studio",
+  "description": "A professional AI image generation studio powered by Gemini Nano Banana Pro models. Features include batch generation, high-resolution upscaling, multi-turn editing, and a built-in portfolio manager.",
+  "requestFramePermissions": []
+}
