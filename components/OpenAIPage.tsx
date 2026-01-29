@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Wand2, Plus, ChevronDown, X, Plug, Star, Trash2 } from 'lucide-react';
+import { RefreshCw, Wand2, Plus, ChevronDown, X, Plug, Star, Trash2, HelpCircle } from 'lucide-react';
 import { OpenAISettings, GeneratedImage, GenerationParams, ModelType, ProviderProfile, ProviderScope, ProviderDraft } from '../types';
-import { generateImages } from '../services/openai';
+import { generateImages, optimizePrompt as optimizePromptOpenAI } from '../services/openai';
 import { useToast } from './Toast';
+import { Tooltip } from './Tooltip';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import {
   deleteProvider as deleteProviderFromDb,
@@ -27,6 +28,21 @@ const isGeminiImageModelId = (id: string): boolean => {
   const s = id.toLowerCase();
   // 常见格式：gemini-3-pro-image、gemini-2.5-flash-image、gemini-3-pro-image-2k-9x16 等
   return s.includes('gemini') && s.includes('image');
+};
+
+/** 判断是否为文本生成模型（用于提示词优化） */
+const isTextModelId = (id: string): boolean => {
+  const s = id.toLowerCase();
+  // 排除图像生成模型
+  if (s.includes('image') || s.includes('vision') || s.includes('dall-e') || s.includes('stable-diffusion')) {
+    return false;
+  }
+  // 常见文本模型关键词
+  const textKeywords = [
+    'gpt', 'claude', 'gemini', 'llama', 'mistral', 'qwen', 'deepseek',
+    'chat', 'turbo', 'instruct', 'text', 'completion'
+  ];
+  return textKeywords.some(keyword => s.includes(keyword));
 };
 
 const inferAntigravityImageConfigFromModelId = (
@@ -161,7 +177,9 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   // Generator State
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
+  const [optimizerModel, setOptimizerModel] = useState<string>(''); // 自定义优化模型
 
   const [customModel, setCustomModel] = useState(() => (
     variant === 'antigravity_tools' ? 'gemini-3-pro-image' : 'gemini-3-pro-image'
@@ -173,6 +191,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   // Antigravity Tools model list (optional UX)
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [availableImageModels, setAvailableImageModels] = useState<string[]>([]);
+  const [availableTextModels, setAvailableTextModels] = useState<string[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsHint, setModelsHint] = useState<string>('');
 
@@ -213,15 +232,19 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       setAvailableModels(cache.all);
       const imageList = (cache.image?.length ? cache.image : cache.all).filter(isGeminiImageModelId);
       setAvailableImageModels(imageList);
+      const textList = (cache.text?.length ? cache.text : cache.all).filter(isTextModelId);
+      setAvailableTextModels(textList);
       const dt = new Date(cache.fetchedAt).toLocaleString();
       setModelsHint(`已缓存模型列表（${cache.all.length}） • ${dt}`);
     } else if (cache?.lastError) {
       setAvailableModels([]);
       setAvailableImageModels([]);
+      setAvailableTextModels([]);
       setModelsHint(cache.lastError);
     } else {
       setAvailableModels([]);
       setAvailableImageModels([]);
+      setAvailableTextModels([]);
       setModelsHint('');
     }
 
@@ -379,10 +402,20 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         return fetch(url, { method: 'GET', headers });
       };
 
-      // 先不带 Authorization，尽量避免浏览器 CORS 预检；如果返回 401/403 再带上 Authorization 重试。
-      let resp = await fetchModels(false);
-      if ((resp.status === 401 || resp.status === 403) && (settings.apiKey || variant === 'antigravity_tools')) {
+      // 如果有 API Key，直接带上 Authorization；否则先不带，失败后再重试
+      let resp: Response;
+      const hasApiKey = !!(settings.apiKey || variant === 'antigravity_tools');
+      
+      if (hasApiKey) {
+        // 有 API Key，直接带上
         resp = await fetchModels(true);
+      } else {
+        // 没有 API Key，先不带 Authorization 尝试
+        resp = await fetchModels(false);
+        if ((resp.status === 401 || resp.status === 403)) {
+          // 如果需要鉴权，提示用户
+          throw new Error('该接口需要 API Key 鉴权，请先填写 API Key');
+        }
       }
 
       if (!resp.ok) {
@@ -403,9 +436,13 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       const geminiImageIds = uniqueIds.filter(isGeminiImageModelId);
       setAvailableImageModels(geminiImageIds);
 
+      const textIds = uniqueIds.filter(isTextModelId);
+      setAvailableTextModels(textIds);
+
       const modelsCache = {
         all: uniqueIds,
         image: geminiImageIds,
+        text: textIds,
         fetchedAt: Date.now(),
         lastError: undefined,
       };
@@ -421,10 +458,17 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       await upsertProviderInDb(updatedProvider);
       setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
 
+      const hints: string[] = [];
       if (geminiImageIds.length > 0) {
-        setModelsHint(`已刷新模型列表（${uniqueIds.length}），筛选到 ${geminiImageIds.length} 个 Gemini 生图模型。`);
+        hints.push(`${geminiImageIds.length} 个图像模型`);
+      }
+      if (textIds.length > 0) {
+        hints.push(`${textIds.length} 个文本模型`);
+      }
+      if (hints.length > 0) {
+        setModelsHint(`已刷新模型列表（${uniqueIds.length}），筛选到 ${hints.join('、')}。`);
       } else {
-        setModelsHint(`已刷新模型列表（${uniqueIds.length}），但未找到 Gemini 生图模型；请手动输入模型名。`);
+        setModelsHint(`已刷新模型列表（${uniqueIds.length}），但未找到图像/文本模型；请手动输入模型名。`);
       }
 
       showToast('Models refreshed', 'success');
@@ -440,6 +484,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         modelsCache: {
           all: activeProvider.modelsCache?.all || [],
           image: activeProvider.modelsCache?.image || [],
+          text: activeProvider.modelsCache?.text || [],
           fetchedAt: activeProvider.modelsCache?.fetchedAt || Date.now(),
           lastError: hint,
         },
@@ -451,6 +496,33 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       showToast('Failed to refresh models: ' + msg, 'error');
     } finally {
       setIsLoadingModels(false);
+    }
+  };
+
+  const handleOptimizePrompt = async () => {
+    if (!prompt) return;
+    if (!optimizerModel.trim()) {
+      showToast('请先设置提示词优化模型', 'error');
+      return;
+    }
+    if (!settings.apiKey) {
+      showToast('Please enter an API key', 'error');
+      return;
+    }
+    if (!settings.baseUrl) {
+      showToast('Please enter a Base URL', 'error');
+      return;
+    }
+
+    setIsOptimizing(true);
+    try {
+      const newPrompt = await optimizePromptOpenAI(prompt, settings, optimizerModel);
+      setPrompt(newPrompt);
+      showToast('Prompt enhanced successfully', 'success');
+    } catch (err) {
+      showToast('Failed to enhance prompt: ' + (err instanceof Error ? err.message : 'Unknown'), 'error');
+    } finally {
+      setIsOptimizing(false);
     }
   };
 
@@ -661,7 +733,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                 type="text"
                 value={providerName}
                 onChange={(e) => setProviderName(e.target.value)}
-                placeholder="给这个供应商起个名字"
+                placeholder="供应商名称"
                 className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
               />
             </div>
@@ -726,13 +798,20 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         </div>
 
         {/* Prompt Input */}
+        {/* Prompt Input */}
         <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
           <div className="flex justify-between items-center mb-3">
             <label className="text-sm font-bold text-gray-300">Prompt</label>
-            <span className="text-xs text-gray-500">
-              <Wand2 className="w-3 h-3 inline mr-1" />
-              Prompt optimization not available
-            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleOptimizePrompt}
+                disabled={isOptimizing || !prompt || !optimizerModel.trim()}
+                className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50"
+                title={!optimizerModel.trim() ? '请先在下方设置优化模型' : ''}
+              >
+                <Wand2 className="w-3 h-3" /> {isOptimizing ? 'Optimizing...' : 'Enhance'}
+              </button>
+            </div>
           </div>
           <textarea
             value={prompt}
@@ -740,6 +819,45 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             placeholder="Describe your imagination..."
             className="w-full h-32 bg-dark-bg border border-dark-border rounded-lg p-3 text-sm text-white placeholder-gray-600 focus:ring-2 focus:ring-banana-500 outline-none resize-none"
           />
+          
+          {/* Optimizer Model Setting */}
+          <div className="mt-3 pt-3 border-t border-dark-border">
+            <div className="flex items-center gap-1.5 mb-2">
+              <label className="text-xs text-gray-400">优化模型</label>
+              <Tooltip content="填写支持 Chat Completions API 的文本模型&#10;示例: gpt-4o, gpt-4-turbo, claude-3-5-sonnet-20241022&#10;根据你的中转服务商支持的模型填写">
+                <HelpCircle className="w-3.5 h-3.5 text-gray-500 cursor-help" />
+              </Tooltip>
+            </div>
+            <div className="space-y-2">
+              <input
+                type="text"
+                value={optimizerModel}
+                onChange={(e) => setOptimizerModel(e.target.value)}
+                placeholder="gpt-4o, claude-3-5-sonnet..."
+                className="w-full text-xs bg-dark-bg border border-dark-border rounded px-2 py-1.5 text-white placeholder-gray-500"
+              />
+              
+              {availableTextModels.length > 0 && (
+                <div className="relative">
+                  <select
+                    value={availableTextModels.includes(optimizerModel) ? optimizerModel : ''}
+                    onChange={(e) => setOptimizerModel(e.target.value)}
+                    className="w-full text-xs bg-dark-bg border border-dark-border rounded px-2 py-1.5 text-white"
+                  >
+                    <option value="" disabled>从已刷新的模型中选择...</option>
+                    {availableTextModels.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">
+                    <ChevronDown className="w-3 h-3" />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* Reference Images */}

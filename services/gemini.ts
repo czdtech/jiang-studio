@@ -163,25 +163,78 @@ export const generateImages = async (
   return images;
 };
 
-/** 编辑图像 */
+/** 上传图像到 File API 并返回 URI（用于多次编辑优化） */
+export const uploadImageFile = async (
+  base64Image: string,
+  settings: GeminiSettings
+): Promise<{ uri: string; name: string }> => {
+  const ai = getClient(settings);
+  
+  // 将 base64 转换为 Blob
+  const base64Data = cleanBase64(base64Image);
+  const binaryString = atob(base64Data);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: 'image/png' });
+  
+  // 上传文件
+  const file = await ai.files.upload({
+    file: blob,
+    config: { 
+      mimeType: 'image/png',
+      displayName: `edit-source-${Date.now()}`
+    }
+  });
+  
+  return { uri: file.uri, name: file.name };
+};
+
+/** 删除上传的文件 */
+export const deleteImageFile = async (
+  fileName: string,
+  settings: GeminiSettings
+): Promise<void> => {
+  try {
+    const ai = getClient(settings);
+    await ai.files.delete(fileName);
+  } catch (e) {
+    console.warn('Failed to delete file:', e);
+  }
+};
+
+/** 编辑图像（支持 File URI 或 inline data） */
 export const editImage = async (
   sourceImage: string,
   instruction: string,
   model: ModelType,
   settings: GeminiSettings,
-  prevParams?: GenerationParams
+  prevParams?: GenerationParams,
+  options?: { fileUri?: string; fileName?: string }
 ): Promise<GeneratedImage> => {
   const ai = getClient(settings);
 
-  const parts: GeminiPart[] = [
-    {
-      inlineData: {
-        data: cleanBase64(sourceImage),
-        mimeType: 'image/png',
-      },
-    },
-    { text: instruction },
-  ];
+  // 优先使用 File URI（节省 token），否则使用 inline data
+  const parts: GeminiPart[] = options?.fileUri
+    ? [
+        {
+          fileData: {
+            fileUri: options.fileUri,
+            mimeType: 'image/png',
+          },
+        },
+        { text: instruction },
+      ]
+    : [
+        {
+          inlineData: {
+            data: cleanBase64(sourceImage),
+            mimeType: 'image/png',
+          },
+        },
+        { text: instruction },
+      ];
 
   const aspectRatio = prevParams?.aspectRatio || '1:1';
   const imageSize = prevParams?.imageSize || '1K';
@@ -214,12 +267,13 @@ export const editImage = async (
 /** 优化 Prompt */
 export const optimizePrompt = async (
   prompt: string,
-  settings: GeminiSettings
+  settings: GeminiSettings,
+  model: 'gemini-2.5-flash' | 'gemini-3-flash-preview' = 'gemini-2.5-flash'
 ): Promise<string> => {
   try {
     const ai = getClient(settings);
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash',
+      model: model,
       contents: `You are an expert prompt engineer for AI image generation. 
       Rewrite the following prompt to be more descriptive, detailed, and optimized for high-quality generation. 
       Keep the core intent but enhance lighting, texture, and style details.

@@ -127,6 +127,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
+  const [optimizerModel, setOptimizerModel] = useState<'gemini-2.5-flash' | 'gemini-3-flash-preview'>('gemini-2.5-flash');
 
   const [providerName, setProviderName] = useState<string>('');
   const [providerFavorite, setProviderFavorite] = useState<boolean>(false);
@@ -137,7 +138,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     aspectRatio: '1:1',
     imageSize: '1K',
     count: 1,
-    model: ModelType.NANO_BANANA_PRO,
+    model: ModelType.NANO_BANANA, // 使用更稳定的 2.5 Flash Image 作为默认
   });
 
   // Results
@@ -307,11 +308,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
       const newPrompt = await optimizePrompt(prompt, {
         apiKey,
         baseUrl: settings.baseUrl || DEFAULT_GEMINI_BASE_URL,
-      });
+      }, optimizerModel);
       setPrompt(newPrompt);
       showToast('Prompt enhanced successfully', 'success');
-    } catch {
-      showToast('Failed to enhance prompt', 'error');
+    } catch (err) {
+      showToast('Failed to enhance prompt: ' + (err instanceof Error ? err.message : 'Unknown'), 'error');
     } finally {
       setIsOptimizing(false);
     }
@@ -407,7 +408,9 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         }
         processedCount++;
         if (processedCount === files.length) {
-          setRefImages((prev) => [...prev, ...newImages].slice(0, 4));
+          // Gemini 3 Pro 支持 14 张，Gemini 2.5 Flash 支持 4 张
+          const maxImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
+          setRefImages((prev) => [...prev, ...newImages].slice(0, maxImages));
         }
       };
       reader.readAsDataURL(file);
@@ -471,17 +474,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
             </div>
 
             <div>
-              <label className="block text-xs text-gray-500 mb-1">名称</label>
-              <input
-                type="text"
-                value={providerName}
-                onChange={(e) => setProviderName(e.target.value)}
-                placeholder="给这个供应商起个名字"
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-            </div>
-
-            <div>
               <label className="block text-xs text-gray-500 mb-1">API Key</label>
               <input
                 type="password"
@@ -491,17 +483,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                 className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
               />
             </div>
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Base URL (Optional)</label>
-              <input
-                type="text"
-                value={settings.baseUrl || ''}
-                onChange={(e) => setSettings((s) => ({ ...s, baseUrl: e.target.value || undefined }))}
-                placeholder={DEFAULT_GEMINI_BASE_URL}
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-              <p className="text-xs text-gray-500 mt-1">留空将使用默认官方地址；只有在你有反代/自建网关时才需要填写。</p>
-            </div>
+
           </div>
         </div>
 
@@ -509,13 +491,24 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
           <div className="flex justify-between items-center mb-3">
             <label className="text-sm font-bold text-gray-300">Prompt</label>
-            <button
-              onClick={handleOptimizePrompt}
-              disabled={isOptimizing || !prompt}
-              className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50"
-            >
-              <Wand2 className="w-3 h-3" /> {isOptimizing ? 'Optimizing...' : 'Enhance Prompt'}
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleOptimizePrompt}
+                disabled={isOptimizing || !prompt}
+                className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50"
+              >
+                <Wand2 className="w-3 h-3" /> {isOptimizing ? 'Optimizing...' : 'Enhance Prompt'}
+              </button>
+              <select
+                value={optimizerModel}
+                onChange={(e) => setOptimizerModel(e.target.value as 'gemini-2.5-flash' | 'gemini-3-flash-preview')}
+                className="text-xs bg-dark-bg border border-dark-border rounded px-2 py-1 text-gray-300"
+                title="选择优化模型"
+              >
+                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+                <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+              </select>
+            </div>
           </div>
           <textarea
             value={prompt}
@@ -527,7 +520,12 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
         {/* Reference Images */}
         <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <label className="block text-sm font-bold text-gray-300 mb-3">Reference Images</label>
+          <div className="flex items-center justify-between mb-3">
+            <label className="block text-sm font-bold text-gray-300">Reference Images</label>
+            <span className="text-xs text-gray-500">
+              {refImages.length} / {params.model === ModelType.NANO_BANANA_PRO ? 14 : 4}
+            </span>
+          </div>
 
           {refImages.length > 0 && (
             <div className="grid grid-cols-3 gap-2 mb-3">
@@ -542,7 +540,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                   </button>
                 </div>
               ))}
-              {refImages.length < 4 && (
+              {refImages.length < (params.model === ModelType.NANO_BANANA_PRO ? 14 : 4) && (
                 <label className="flex items-center justify-center aspect-square border-2 border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer bg-dark-bg/50 transition-colors">
                   <Plus className="w-5 h-5 text-gray-500" />
                   <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
@@ -554,7 +552,9 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
           {refImages.length === 0 && (
             <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer bg-dark-bg transition-colors">
               <Plus className="w-6 h-6 text-gray-500 mb-1" />
-              <span className="text-xs text-gray-400">Upload References (Max 4)</span>
+              <span className="text-xs text-gray-400">
+                Upload References (Max {params.model === ModelType.NANO_BANANA_PRO ? 14 : 4})
+              </span>
               <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
             </label>
           )}

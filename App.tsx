@@ -84,7 +84,8 @@ const App = () => {
     sourceImage: string,
     instruction: string,
     model: ModelType,
-    prevParams?: GenerationParams
+    prevParams?: GenerationParams,
+    fileInfo?: { uri: string; name: string }
   ): Promise<GeneratedImage> => {
     const scope = inferImageScope(editingImage);
 
@@ -93,7 +94,14 @@ const App = () => {
       if (!settings.apiKey) {
         throw new Error('请先在「Gemini 官方」页配置 API Key（编辑功能会调用官方接口）。');
       }
-      const result = await editGeminiImage(sourceImage, instruction, normalizeGeminiModel(model), settings, prevParams);
+      const result = await editGeminiImage(
+        sourceImage, 
+        instruction, 
+        normalizeGeminiModel(model), 
+        settings, 
+        prevParams,
+        fileInfo ? { fileUri: fileInfo.uri, fileName: fileInfo.name } : undefined
+      );
       return {
         ...result,
         sourceScope: 'gemini',

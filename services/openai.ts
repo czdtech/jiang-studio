@@ -574,8 +574,54 @@ export const editImage = async (
   throw new Error('Image editing returned empty response. The provider may not support image input.');
 };
 
-/** 优化 Prompt（OpenAI 兼容模式不保证有可用的文本模型） */
-export const optimizePrompt = async (prompt: string): Promise<string> => {
-  console.log('Prompt optimization skipped for OpenAI compatible mode (no guaranteed text model)');
-  return prompt;
+/** 优化 Prompt（OpenAI 兼容） */
+export const optimizePrompt = async (
+  prompt: string,
+  settings: { apiKey: string; baseUrl: string },
+  model: string
+): Promise<string> => {
+  if (!model || !model.trim()) {
+    throw new Error('请先设置提示词优化模型');
+  }
+
+  try {
+    const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert prompt engineer for AI image generation. Rewrite prompts to be more descriptive, detailed, and optimized for high-quality generation. Keep the core intent but enhance lighting, texture, and style details. Return ONLY the optimized prompt text.'
+          },
+          {
+            role: 'user',
+            content: `Original Prompt: ${prompt}`
+          }
+        ],
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    const optimized = data.choices?.[0]?.message?.content?.trim();
+    
+    if (!optimized) {
+      throw new Error('No response from optimization model');
+    }
+
+    return optimized;
+  } catch (error) {
+    console.error('Prompt optimization failed:', error);
+    throw error;
+  }
 };

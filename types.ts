@@ -58,6 +58,7 @@ export type ProviderScope = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'k
 export interface ProviderModelsCache {
   all: string[];
   image: string[];
+  text?: string[];
   fetchedAt: number;
   lastError?: string;
 }

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Edit, X, ArrowRight } from 'lucide-react';
 import { GeneratedImage, ModelType, GenerationParams } from '../types';
+import { uploadImageFile, deleteImageFile } from '../services/gemini';
+import { getProviders, getActiveProviderId } from '../services/db';
 import { useToast } from './Toast';
 
 /** 编辑函数类型 */
@@ -8,7 +10,8 @@ export type EditImageFn = (
   sourceImage: string,
   instruction: string,
   model: ModelType,
-  prevParams?: GenerationParams
+  prevParams?: GenerationParams,
+  fileInfo?: { uri: string; name: string } // 可选的文件信息，用于 Gemini File API 优化
 ) => Promise<GeneratedImage>;
 
 interface EditorModalProps {
@@ -30,11 +33,13 @@ export const EditorModal = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isLoadingSource, setIsLoadingSource] = useState(false);
   const [currentView, setCurrentView] = useState<GeneratedImage | null>(image);
+  const [uploadedFileInfo, setUploadedFileInfo] = useState<{ uri: string; name: string } | null>(null);
   const { showToast } = useToast();
 
   useEffect(() => {
     setCurrentView(image);
     setPrompt('');
+    setUploadedFileInfo(null); // 重置文件信息
 
     if (!image?.fileHandle) return;
 
@@ -68,6 +73,69 @@ export const EditorModal = ({
     };
   }, [image]);
 
+  // 为 Gemini 图像上传到 File API（优化 token 使用）
+  useEffect(() => {
+    if (!isOpen || !image || image.sourceScope !== 'gemini') return;
+    
+    let cancelled = false;
+    
+    const uploadFile = async () => {
+      try {
+        // 获取 Gemini 设置
+        const providers = await getProviders('gemini');
+        const activeId = await getActiveProviderId('gemini');
+        const provider = providers.find(p => p.id === (image.sourceProviderId || activeId)) || providers[0];
+        
+        if (!provider?.apiKey) return; // 没有 API Key，跳过上传
+        
+        const fileInfo = await uploadImageFile(image.base64, {
+          apiKey: provider.apiKey,
+          baseUrl: provider.baseUrl || 'https://generativelanguage.googleapis.com'
+        });
+        
+        if (!cancelled) {
+          setUploadedFileInfo(fileInfo);
+          console.log('Image uploaded to File API for token optimization');
+        }
+      } catch (e) {
+        console.warn('Failed to upload image to File API:', e);
+        // 失败不影响功能，会回退到 inline data
+      }
+    };
+    
+    void uploadFile();
+    
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, image]);
+
+  // 清理：关闭编辑器时删除上传的文件
+  useEffect(() => {
+    return () => {
+      if (uploadedFileInfo && image?.sourceScope === 'gemini') {
+        const cleanup = async () => {
+          try {
+            const providers = await getProviders('gemini');
+            const activeId = await getActiveProviderId('gemini');
+            const provider = providers.find(p => p.id === (image.sourceProviderId || activeId)) || providers[0];
+            
+            if (provider?.apiKey) {
+              await deleteImageFile(uploadedFileInfo.name, {
+                apiKey: provider.apiKey,
+                baseUrl: provider.baseUrl || 'https://generativelanguage.googleapis.com'
+              });
+              console.log('Uploaded file cleaned up');
+            }
+          } catch (e) {
+            console.warn('Failed to cleanup uploaded file:', e);
+          }
+        };
+        void cleanup();
+      }
+    };
+  }, [uploadedFileInfo, image]);
+
   if (!isOpen || !image) return null;
 
   const handleEdit = async () => {
@@ -79,7 +147,8 @@ export const EditorModal = ({
         currentView.base64,
         prompt,
         image.params.model as ModelType,
-        currentView.params
+        currentView.params,
+        uploadedFileInfo || undefined // 传递文件信息（如果有）
       );
       setCurrentView(result);
       onUpdate(result);

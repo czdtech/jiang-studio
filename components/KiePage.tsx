@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plug, RefreshCw, Wand2, Plus, X, Star, Trash2 } from 'lucide-react';
+import { Plug, RefreshCw, Wand2, Plus, X, Star, Trash2, ChevronDown, HelpCircle } from 'lucide-react';
 import { GeneratedImage, GenerationParams, ModelType, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
-import { generateImages, KieSettings } from '../services/kie';
+import { generateImages, KieSettings, optimizePrompt as optimizePromptKie } from '../services/kie';
 import { useToast } from './Toast';
+import { Tooltip } from './Tooltip';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import {
   deleteProvider as deleteProviderFromDb,
@@ -106,8 +107,10 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   // Generator State
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
   const [customModel, setCustomModel] = useState('nano-banana-pro');
+  const [optimizerModel, setOptimizerModel] = useState<string>(''); // 自定义优化模型
 
   // Params
   const [params, setParams] = useState<GenerationParams>({
@@ -260,6 +263,33 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   };
 
   const handleToggleFavorite = () => setProviderFavorite((v) => !v);
+
+  const handleOptimizePrompt = async () => {
+    if (!prompt) return;
+    if (!optimizerModel.trim()) {
+      showToast('请先设置提示词优化模型', 'error');
+      return;
+    }
+    if (!settings.apiKey) {
+      showToast('请先填写 API Key', 'error');
+      return;
+    }
+    if (!settings.baseUrl) {
+      showToast('请先填写 Base URL', 'error');
+      return;
+    }
+
+    setIsOptimizing(true);
+    try {
+      const newPrompt = await optimizePromptKie(prompt, settings, optimizerModel);
+      setPrompt(newPrompt);
+      showToast('Prompt enhanced successfully', 'success');
+    } catch (err) {
+      showToast('Failed to enhance prompt: ' + (err instanceof Error ? err.message : 'Unknown'), 'error');
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
 
   const handleGenerate = async () => {
     if (isGenerating) return;
@@ -459,17 +489,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             </div>
 
             <div>
-              <label className="block text-xs text-gray-500 mb-1">名称</label>
-              <input
-                type="text"
-                value={providerName}
-                onChange={(e) => setProviderName(e.target.value)}
-                placeholder="例如：Kie 主账号"
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-            </div>
-
-            <div>
               <label className="block text-xs text-gray-500 mb-1">API Key</label>
               <input
                 type="password"
@@ -495,9 +514,19 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
 
         {/* Prompt */}
         <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <Wand2 className="w-4 h-4" /> Prompt
-          </h3>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+              <Wand2 className="w-4 h-4" /> Prompt
+            </h3>
+            <button
+              onClick={handleOptimizePrompt}
+              disabled={isOptimizing || !prompt || !optimizerModel.trim()}
+              className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50"
+              title={!optimizerModel.trim() ? '请先在下方设置优化模型' : ''}
+            >
+              <Wand2 className="w-3 h-3" /> {isOptimizing ? 'Optimizing...' : 'Enhance'}
+            </button>
+          </div>
 
           <textarea
             value={prompt}
@@ -505,6 +534,23 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             placeholder="输入提示词..."
             className="w-full h-28 bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600 resize-none"
           />
+
+          {/* Optimizer Model Setting */}
+          <div className="mt-3 pt-3 border-t border-dark-border">
+            <div className="flex items-center gap-1.5 mb-2">
+              <label className="text-xs text-gray-400">优化模型</label>
+              <Tooltip content="填写支持 Chat Completions API 的文本模型&#10;示例: gpt-4o, qwen-plus, qwen-turbo&#10;根据 Kie AI 支持的模型填写&#10;&#10;注意: Kie AI 不提供 /v1/models 接口&#10;请参考官方文档手动输入模型名称">
+                <HelpCircle className="w-3.5 h-3.5 text-gray-500 cursor-help" />
+              </Tooltip>
+            </div>
+            <input
+              type="text"
+              value={optimizerModel}
+              onChange={(e) => setOptimizerModel(e.target.value)}
+              placeholder="gpt-4o, qwen-plus..."
+              className="w-full text-xs bg-dark-bg border border-dark-border rounded px-2 py-1.5 text-white placeholder-gray-500"
+            />
+          </div>
 
           {/* Params */}
           <div className="grid grid-cols-2 gap-3 mt-4">
