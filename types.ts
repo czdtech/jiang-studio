@@ -91,3 +91,12 @@ export interface ChatMessage {
   text?: string;
   image?: string;
 }
+
+/** Prompt 优化器配置（独立于各页面供应商） */
+export interface PromptOptimizerConfig {
+  enabled: boolean; // 是否启用独立配置（false 时使用页面自带供应商）
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  updatedAt: number;
+}

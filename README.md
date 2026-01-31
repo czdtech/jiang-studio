@@ -20,3 +20,12 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Mxb1zZ_YaSzpJDMtEjEXYM
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+## E2E (Playwright)
+
+- Run smoke + UI screenshot regression:
+  `npm run test:e2e`
+- Update screenshot baselines:
+  `npm run test:e2e:update`
+- Open the Playwright UI runner:
+  `npm run test:e2e:ui`

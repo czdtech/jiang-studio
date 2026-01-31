@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { History, Edit, Trash2, FolderOpen, X as XIcon, ShieldAlert } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { History, Edit, Trash2, FolderOpen, X as XIcon, ShieldAlert, ChevronDown } from 'lucide-react';
 import { GeneratedImage } from '../types';
 import {
   clearGalleryDirectoryHandle,
@@ -26,6 +26,18 @@ export const PortfolioGrid = ({
   const [gallerySupported, setGallerySupported] = useState<boolean>(false);
   const [galleryPermission, setGalleryPermission] = useState<PermissionState | 'unknown'>('unknown');
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
+  const [displayCount, setDisplayCount] = useState(20);
+
+  // 排序和分页逻辑
+  const sortedImages = useMemo(() => {
+    const sorted = [...images].sort((a, b) =>
+      sortOrder === 'newest'
+        ? b.timestamp - a.timestamp
+        : a.timestamp - b.timestamp
+    );
+    return sorted.slice(0, displayCount);
+  }, [images, sortOrder, displayCount]);
 
   useEffect(() => {
     setGallerySupported(typeof (window as any).showDirectoryPicker === 'function');
@@ -95,11 +107,27 @@ export const PortfolioGrid = ({
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
-        <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-          <History className="w-6 h-6 text-banana-500" /> Creation History
-        </h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+            <History className="w-6 h-6 text-banana-500" /> 作品历史
+          </h2>
+          <span className="text-sm text-gray-500">({images.length} 张)</span>
+        </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* 排序下拉 */}
+          <div className="relative">
+            <select
+              value={sortOrder}
+              onChange={(e) => setSortOrder(e.target.value as 'newest' | 'oldest')}
+              className="appearance-none bg-dark-surface border border-dark-border rounded-lg px-3 py-2 pr-8 text-sm text-gray-300 cursor-pointer hover:border-gray-600 focus:outline-none focus:ring-2 focus:ring-banana-500 focus:border-banana-500 transition-colors"
+            >
+              <option value="newest">最新优先</option>
+              <option value="oldest">最旧优先</option>
+            </select>
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+          </div>
+
           {galleryDirName ? (
             <div className="flex items-center gap-2 bg-dark-surface border border-dark-border rounded-lg px-3 py-2">
               <FolderOpen className="w-4 h-4 text-gray-400" />
@@ -119,6 +147,7 @@ export const PortfolioGrid = ({
 
               <button
                 onClick={handleClearGalleryDir}
+                aria-label="清除图库目录"
                 className="p-1 rounded hover:bg-dark-border text-gray-400 hover:text-white"
                 title="清除图库目录"
               >
@@ -163,31 +192,41 @@ export const PortfolioGrid = ({
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-        {images.map((img, idx) => (
+        {sortedImages.map((img, idx) => (
           <div
             key={img.id}
-            className="bg-dark-surface rounded-xl overflow-hidden border border-dark-border hover:border-banana-500/50 transition-all group cursor-zoom-in"
-            onClick={() => onImageClick(images, idx)}
+            role="button"
+            tabIndex={0}
+            className="bg-dark-surface/60 backdrop-blur-sm rounded-xl overflow-hidden border border-dark-border hover:border-banana-500/50 transition-all duration-200 group cursor-pointer"
+            onClick={() => onImageClick(sortedImages, idx)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onImageClick(sortedImages, idx);
+              }
+            }}
           >
             <div className="aspect-square bg-black relative">
-              <img src={img.base64} alt="portfolio" className="w-full h-full object-cover" />
-              <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <img src={img.base64} alt="作品" className="w-full h-full object-cover" />
+              <div className="absolute top-2 right-2 flex gap-1 opacity-100 md:opacity-0 md:invisible md:group-hover:opacity-100 md:group-hover:visible transition-opacity">
                 <button
                   onClick={(e) => { e.stopPropagation(); onEdit(img); }}
                   className="p-2 bg-black/50 hover:bg-banana-500 hover:text-black text-white rounded-full backdrop-blur-sm"
-                  title="Edit"
+                  title="编辑"
+                  aria-label="编辑"
                 >
                   <Edit className="w-4 h-4" />
                 </button>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    if (confirm('Delete image?')) {
+                    if (confirm('确认删除这张图片？')) {
                       onDelete(img.id);
                     }
                   }}
                   className="p-2 bg-black/50 hover:bg-red-500 text-white rounded-full backdrop-blur-sm"
-                  title="Delete"
+                  title="删除"
+                  aria-label="删除"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -204,10 +243,22 @@ export const PortfolioGrid = ({
         ))}
         {images.length === 0 && (
           <div className="col-span-full py-20 text-center text-gray-500">
-            No images in portfolio yet. Start generating!
+            作品集还没有图片，先去生成几张吧
           </div>
         )}
       </div>
+
+      {/* 加载更多按钮 */}
+      {displayCount < images.length && (
+        <div className="flex justify-center pt-4">
+          <button
+            onClick={() => setDisplayCount((c) => c + 20)}
+            className="px-6 py-3 bg-dark-surface border border-dark-border rounded-lg text-sm text-gray-400 hover:text-white hover:border-gray-600 transition-colors"
+          >
+            加载更多…（剩余 {images.length - displayCount} 张）
+          </button>
+        </div>
+      )}
     </div>
   );
 };

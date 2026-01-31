@@ -198,7 +198,7 @@ export const deleteImageFile = async (
 ): Promise<void> => {
   try {
     const ai = getClient(settings);
-    await ai.files.delete(fileName);
+    await ai.files.delete({ name: fileName });
   } catch (e) {
     console.warn('Failed to delete file:', e);
   }

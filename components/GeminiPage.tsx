@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Settings, RefreshCw, Wand2, Plus, ChevronDown, X, Star, Trash2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Settings, RefreshCw, Wand2, Plus, ChevronDown, X, Star, Trash2, Sparkles, Image as ImageIcon } from 'lucide-react';
 import {
   GeminiSettings,
   GeneratedImage,
@@ -9,14 +9,19 @@ import {
   ProviderDraft,
   ProviderProfile,
   ProviderScope,
+  PromptOptimizerConfig,
 } from '../types';
-import { generateImages, optimizePrompt } from '../services/gemini';
+import { generateImages, optimizePrompt as optimizePromptGemini } from '../services/gemini';
+import { optimizePrompt as optimizePromptOpenAI } from '../services/openai';
 import { useToast } from './Toast';
 import { ImageGrid } from './ImageGrid';
+import { PromptOptimizerSettings } from './PromptOptimizerSettings';
+import { SamplePromptChips } from './SamplePromptChips';
 import {
   deleteProvider as deleteProviderFromDb,
   getActiveProviderId as getActiveProviderIdFromDb,
   getDraft as getDraftFromDb,
+  getPromptOptimizerConfig,
   getProviders as getProvidersFromDb,
   setActiveProviderId as setActiveProviderIdInDb,
   upsertDraft as upsertDraftInDb,
@@ -69,8 +74,31 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   const generationRunIdRef = useRef(0);
   const isMountedRef = useRef(false);
 
+  // 参考图弹出层
+  const [showRefPopover, setShowRefPopover] = useState(false);
+
+  // 独立的 Prompt 优化器配置
+  const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
+
+  // 初始化加载独立优化器配置
   useEffect(() => {
-    // React StrictMode(dev) 会执行一次“mount->unmount->mount”来检测副作用；这里必须在 effect 中显式置 true。
+    let cancelled = false;
+    const load = async () => {
+      const config = await getPromptOptimizerConfig();
+      if (cancelled) return;
+      if (config?.enabled) {
+        setOptimizerConfig(config);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleOptimizerConfigChange = useCallback((config: PromptOptimizerConfig | null) => {
+    setOptimizerConfig(config);
+  }, []);
+
+  useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
@@ -138,16 +166,15 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     aspectRatio: '1:1',
     imageSize: '1K',
     count: 1,
-    model: ModelType.NANO_BANANA, // 使用更稳定的 2.5 Flash Image 作为默认
+    model: ModelType.NANO_BANANA,
   });
 
   // Results
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
 
-  // 应用当前供应商配置 + 加载草稿（每个供应商一份）
+  // 应用当前供应商配置 + 加载草稿
   useEffect(() => {
     if (!activeProvider) return;
-    // 避免 provider debounce 保存时触发“二次水合”，覆盖用户刚改的参数/模型
     if (hydratedProviderIdRef.current === activeProvider.id) return;
     hydratedProviderIdRef.current = activeProvider.id;
 
@@ -199,7 +226,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     };
   }, [activeProvider]);
 
-  // 供应商配置持久化（名称/收藏/baseUrl/apiKey/默认模型）
+  // 供应商配置持久化
   useEffect(() => {
     if (!activeProvider) return;
     if (isHydratingRef.current) return;
@@ -231,7 +258,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     params.model,
   ]);
 
-  // 草稿持久化（每个供应商一份，包含 refImages）
+  // 草稿持久化
   useEffect(() => {
     if (!activeProvider) return;
     if (isHydratingRef.current) return;
@@ -296,7 +323,40 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   };
 
   const handleOptimizePrompt = async () => {
-    if (!prompt) return;
+    if (!prompt.trim()) return;
+
+    // 优先使用独立配置
+    if (optimizerConfig?.enabled) {
+      if (!optimizerConfig.apiKey) {
+        showToast('请先在优化器设置中填写 API Key', 'error');
+        return;
+      }
+      if (!optimizerConfig.baseUrl) {
+        showToast('请先在优化器设置中填写 Base URL', 'error');
+        return;
+      }
+      if (!optimizerConfig.model.trim()) {
+        showToast('请先在优化器设置中填写模型名', 'error');
+        return;
+      }
+
+      setIsOptimizing(true);
+      try {
+        const newPrompt = await optimizePromptOpenAI(
+          prompt,
+          { apiKey: optimizerConfig.apiKey, baseUrl: optimizerConfig.baseUrl },
+          optimizerConfig.model
+        );
+        setPrompt(newPrompt);
+        showToast('提示词已增强', 'success');
+      } catch (err) {
+        showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
+      } finally {
+        setIsOptimizing(false);
+      }
+      return;
+    }
+
     const apiKey = settings.apiKey?.trim();
     if (!apiKey) {
       showToast('请先填写 Gemini API Key', 'error');
@@ -305,14 +365,14 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
     setIsOptimizing(true);
     try {
-      const newPrompt = await optimizePrompt(prompt, {
+      const newPrompt = await optimizePromptGemini(prompt, {
         apiKey,
         baseUrl: settings.baseUrl || DEFAULT_GEMINI_BASE_URL,
       }, optimizerModel);
       setPrompt(newPrompt);
-      showToast('Prompt enhanced successfully', 'success');
+      showToast('提示词已增强', 'success');
     } catch (err) {
-      showToast('Failed to enhance prompt: ' + (err instanceof Error ? err.message : 'Unknown'), 'error');
+      showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
     } finally {
       setIsOptimizing(false);
     }
@@ -320,7 +380,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
   const handleGenerate = async () => {
     if (isGenerating) return;
-    if (!prompt) return;
+    if (!prompt.trim()) return;
     const apiKey = settings.apiKey?.trim();
     if (!apiKey) {
       showToast('请先填写 Gemini API Key', 'error');
@@ -355,11 +415,10 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         sourceProviderId: activeProviderId,
       }));
       setGeneratedImages(withSource);
-      // Auto save to portfolio
       for (const img of withSource) {
         await saveImage(img);
       }
-      showToast(`Generated ${withSource.length} image${withSource.length > 1 ? 's' : ''}`, 'success');
+      showToast(`生成完成：${withSource.length} 张`, 'success');
     } catch (error) {
       if (!isMountedRef.current) return;
       if (generationRunIdRef.current !== runId) return;
@@ -370,7 +429,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         return;
       }
 
-      showToast('Generation Error: ' + (error instanceof Error ? error.message : 'Unknown'), 'error');
+      showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
     } finally {
       if (!isMountedRef.current) return;
       if (generationRunIdRef.current !== runId) return;
@@ -408,7 +467,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         }
         processedCount++;
         if (processedCount === files.length) {
-          // Gemini 3 Pro 支持 14 张，Gemini 2.5 Flash 支持 4 张
           const maxImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
           setRefImages((prev) => [...prev, ...newImages].slice(0, maxImages));
         }
@@ -421,261 +479,296 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const maxRefImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
+  const canGenerate = !!prompt.trim() && !!settings.apiKey.trim();
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-      {/* Left Controls */}
-      <div className="lg:col-span-4 space-y-6">
-        {/* API Configuration */}
-        <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <Settings className="w-4 h-4" /> Gemini Settings
-          </h3>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">供应商</label>
-              <div className="flex gap-2">
-                <select
-                  value={activeProviderId}
-                  onChange={(e) => void handleSelectProvider(e.target.value)}
-                  className="flex-1 appearance-none bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer"
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {(p.favorite ? '★ ' : '') + (p.name || p.id)}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => void handleCreateProvider()}
-                  className="px-3 py-2 rounded-lg border border-dark-border bg-dark-bg text-gray-300 hover:border-banana-500/60 hover:text-white transition-colors"
-                  title="新增/复制供应商"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleToggleFavorite}
-                  className={`px-3 py-2 rounded-lg border transition-colors ${
-                    providerFavorite
-                      ? 'border-banana-500/70 bg-banana-500/10 text-banana-300'
-                      : 'border-dark-border bg-dark-bg text-gray-300 hover:border-banana-500/60 hover:text-white'
-                  }`}
-                  title="收藏"
-                >
-                  <Star className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => void handleDeleteProvider()}
-                  className="px-3 py-2 rounded-lg border border-dark-border bg-dark-bg text-gray-300 hover:border-red-500/60 hover:text-white transition-colors"
-                  title="删除供应商"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">API Key</label>
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
-                placeholder="AIza..."
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-            </div>
-
+    <div className="h-full flex flex-col">
+      {/* 上区：左侧配置 + 右侧图片展示 */}
+      <div className="flex-1 min-h-0 p-4 flex flex-col md:flex-row gap-4">
+        {/* 左侧：API 配置 */}
+        <div className="w-full md:w-[280px] md:shrink-0 max-h-[40vh] md:max-h-none border border-dark-border rounded-xl bg-dark-surface/80 backdrop-blur-sm p-4 space-y-4 overflow-y-auto">
+          <div className="flex items-center gap-1.5">
+            <Settings className="w-4 h-4 text-banana-500" />
+            <span className="text-sm font-medium text-white">Gemini 设置</span>
           </div>
+
+          {/* 供应商选择 */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-500">供应商</label>
+            <select
+              value={activeProviderId}
+              onChange={(e) => void handleSelectProvider(e.target.value)}
+              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer"
+            >
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {(p.favorite ? '★ ' : '') + (p.name || p.id)}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => void handleCreateProvider()}
+                className="flex-1 h-8 flex items-center justify-center gap-1 rounded-lg border border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600 transition-colors text-xs"
+                title="新增供应商"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                新增
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                className={`h-8 w-8 flex items-center justify-center rounded-lg border transition-colors ${
+                  providerFavorite
+                    ? 'border-banana-500/70 bg-banana-500/10 text-banana-400'
+                    : 'border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600'
+                }`}
+                title="收藏"
+                aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
+              >
+                <Star className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteProvider()}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-dark-border bg-dark-bg text-gray-400 hover:text-red-400 hover:border-red-500/50 transition-colors"
+                title="删除供应商"
+                aria-label="删除供应商"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+
+          {/* API Key */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-500">API Key</label>
+            <input
+              type="password"
+              value={settings.apiKey}
+              onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
+              placeholder="AIza..."
+              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+            />
+            {!settings.apiKey.trim() && (
+              <p className="text-xs text-yellow-500/80">
+                未填写 API Key，无法生成/增强；请先配置后再开始。
+              </p>
+            )}
+          </div>
+
+          {/* Prompt 优化器配置（内联） */}
+          <PromptOptimizerSettings onConfigChange={handleOptimizerConfigChange} />
         </div>
 
-        {/* Prompt Input */}
-        <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <div className="flex justify-between items-center mb-3">
-            <label className="text-sm font-bold text-gray-300">Prompt</label>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleOptimizePrompt}
-                disabled={isOptimizing || !prompt}
-                className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50"
-              >
-                <Wand2 className="w-3 h-3" /> {isOptimizing ? 'Optimizing...' : 'Enhance Prompt'}
-              </button>
-              <select
-                value={optimizerModel}
-                onChange={(e) => setOptimizerModel(e.target.value as 'gemini-2.5-flash' | 'gemini-3-flash-preview')}
-                className="text-xs bg-dark-bg border border-dark-border rounded px-2 py-1 text-gray-300"
-                title="选择优化模型"
-              >
-                <option value="gemini-2.5-flash">gemini-2.5-flash</option>
-                <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
-              </select>
-            </div>
-          </div>
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe your imagination..."
-            className="w-full h-32 bg-dark-bg border border-dark-border rounded-lg p-3 text-sm text-white placeholder-gray-600 focus:ring-2 focus:ring-banana-500 outline-none resize-none"
+        {/* 右侧：图片展示 */}
+        <div className="flex-1 min-w-0 overflow-auto">
+          <ImageGrid
+            images={generatedImages}
+            isGenerating={isGenerating}
+            params={params}
+            onImageClick={onImageClick}
+            onEdit={onEdit}
           />
         </div>
-
-        {/* Reference Images */}
-        <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <div className="flex items-center justify-between mb-3">
-            <label className="block text-sm font-bold text-gray-300">Reference Images</label>
-            <span className="text-xs text-gray-500">
-              {refImages.length} / {params.model === ModelType.NANO_BANANA_PRO ? 14 : 4}
-            </span>
-          </div>
-
-          {refImages.length > 0 && (
-            <div className="grid grid-cols-3 gap-2 mb-3">
-              {refImages.map((img, idx) => (
-                <div key={idx} className="relative group aspect-square rounded-lg overflow-hidden border border-dark-border">
-                  <img src={img} alt={`Ref ${idx}`} className="w-full h-full object-cover" />
-                  <button
-                    onClick={() => removeRefImage(idx)}
-                    className="absolute top-1 right-1 p-1 bg-black/60 hover:bg-red-500 rounded-full text-white transition-colors"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              {refImages.length < (params.model === ModelType.NANO_BANANA_PRO ? 14 : 4) && (
-                <label className="flex items-center justify-center aspect-square border-2 border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer bg-dark-bg/50 transition-colors">
-                  <Plus className="w-5 h-5 text-gray-500" />
-                  <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-                </label>
-              )}
-            </div>
-          )}
-
-          {refImages.length === 0 && (
-            <label className="flex flex-col items-center justify-center w-full h-24 border-2 border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer bg-dark-bg transition-colors">
-              <Plus className="w-6 h-6 text-gray-500 mb-1" />
-              <span className="text-xs text-gray-400">
-                Upload References (Max {params.model === ModelType.NANO_BANANA_PRO ? 14 : 4})
-              </span>
-              <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-            </label>
-          )}
-        </div>
-
-        {/* Parameters */}
-        <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg space-y-5">
-          {/* Model Selection */}
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Model</label>
-            <div className="relative">
-              <select
-                value={params.model}
-                onChange={(e) => setParams({ ...params, model: normalizeGeminiModel(e.target.value) })}
-                className="w-full appearance-none bg-dark-bg border border-dark-border rounded-lg px-4 py-3 text-sm text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer"
-              >
-                {MODEL_PRESETS.map((preset) => (
-                  <option key={preset.value} value={preset.value}>
-                    {preset.label} ({preset.desc})
-                  </option>
-                ))}
-              </select>
-              <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-gray-500">
-                <ChevronDown className="w-4 h-4" />
-              </div>
-            </div>
-          </div>
-
-          {/* Aspect Ratio */}
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Aspect Ratio</label>
-            <div className="grid grid-cols-5 gap-2">
-              {(['1:1', '16:9', '9:16', '4:3', '3:4'] as const).map((ratio) => (
-                <button
-                  key={ratio}
-                  onClick={() => setParams({ ...params, aspectRatio: ratio })}
-                  className={`py-2 text-xs rounded border transition-all ${
-                    params.aspectRatio === ratio
-                      ? 'bg-banana-500 text-black border-banana-500 font-bold'
-                      : 'bg-dark-bg border-dark-border text-gray-400 hover:border-gray-500'
-                  }`}
-                >
-                  {ratio}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Resolution (Pro only) */}
-          {params.model === ModelType.NANO_BANANA_PRO && (
-            <div>
-              <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Resolution</label>
-              <div className="grid grid-cols-3 gap-2">
-                {(['1K', '2K', '4K'] as const).map((size) => (
-                  <button
-                    key={size}
-                    onClick={() => setParams({ ...params, imageSize: size })}
-                    className={`py-2 text-xs rounded border transition-all ${
-                      params.imageSize === size
-                        ? 'bg-banana-500 text-black border-banana-500 font-bold'
-                        : 'bg-dark-bg border-dark-border text-gray-400 hover:border-gray-500'
-                    }`}
-                  >
-                    {size}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Count */}
-          <div>
-            <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">
-              Quantity: {params.count}
-            </label>
-            <input
-              type="range"
-              min="1"
-              max="8"
-              value={params.count}
-              onChange={(e) => setParams({ ...params, count: parseInt(e.target.value) })}
-              className="w-full accent-banana-500 h-2 bg-dark-bg rounded-lg appearance-none cursor-pointer"
-            />
-            <div className="flex justify-between text-xs text-gray-500 mt-1">
-              <span>1</span>
-              <span>8</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Button */}
-        <button
-          onClick={isGenerating ? handleStop : handleGenerate}
-          disabled={!prompt && !isGenerating}
-          className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg shadow-banana-900/20 transition-all ${
-            !prompt && !isGenerating
-              ? 'bg-dark-surface text-gray-500 cursor-not-allowed'
-              : isGenerating
-                ? 'bg-red-500 hover:bg-red-400 text-black hover:scale-[1.02]'
-                : 'bg-banana-500 hover:bg-banana-400 text-black hover:scale-[1.02]'
-          }`}
-        >
-          {isGenerating ? (
-            <span className="flex items-center justify-center gap-2">
-              <RefreshCw className="w-5 h-5 animate-spin" /> 点击停止
-            </span>
-          ) : (
-            `Generate ${params.count} Image${params.count > 1 ? 's' : ''}`
-          )}
-        </button>
       </div>
 
-      {/* Right Display Grid */}
-      <div className="lg:col-span-8">
-        <ImageGrid
-          images={generatedImages}
-          isGenerating={isGenerating}
-          params={params}
-          onImageClick={onImageClick}
-          onEdit={onEdit}
-        />
+      {/* 下区：Prompt + 参数 + 生成（全宽） */}
+      <div className="shrink-0 px-4 pb-4">
+        <div className="border border-dark-border rounded-xl bg-dark-surface/80 backdrop-blur-sm p-4">
+          <div className="flex flex-col lg:flex-row items-stretch gap-4 w-full overflow-hidden">
+            {/* Prompt */}
+            <div className="flex-1 min-w-0 flex flex-col">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-gray-500">提示词</span>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={optimizerModel}
+                    onChange={(e) => setOptimizerModel(e.target.value as 'gemini-2.5-flash' | 'gemini-3-flash-preview')}
+                    className="text-xs bg-dark-bg border border-dark-border rounded px-1.5 py-0.5 text-gray-400 cursor-pointer"
+                  >
+                    <option value="gemini-2.5-flash">2.5-flash</option>
+                    <option value="gemini-3-flash-preview">3-flash</option>
+                  </select>
+                  <button
+                    onClick={handleOptimizePrompt}
+                    disabled={isOptimizing || !prompt}
+                    className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Wand2 className="w-3 h-3" />
+                    {isOptimizing ? '优化中…' : '增强'}
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="描述你的想法…"
+                className="flex-1 min-h-[80px] resize-none text-sm bg-dark-bg border border-dark-border rounded-lg p-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+              />
+              {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
+            </div>
+
+            {/* 参数区 */}
+            <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2">
+              {/* Model + Ratio + Size */}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">模型</label>
+                  <div className="relative">
+                    <select
+                      value={params.model}
+                      onChange={(e) => setParams({ ...params, model: normalizeGeminiModel(e.target.value) })}
+                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                    >
+                      {MODEL_PRESETS.map((preset) => (
+                        <option key={preset.value} value={preset.value}>
+                          {preset.label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">比例</label>
+                  <div className="relative">
+                    <select
+                      value={params.aspectRatio}
+                      onChange={(e) => setParams({ ...params, aspectRatio: e.target.value as GenerationParams['aspectRatio'] })}
+                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                    >
+                      {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
+                        <option key={r} value={r}>{r}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">尺寸</label>
+                  <div className="relative">
+                    <select
+                      value={params.imageSize}
+                      onChange={(e) => setParams({ ...params, imageSize: e.target.value as GenerationParams['imageSize'] })}
+                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                      disabled={params.model !== ModelType.NANO_BANANA_PRO}
+                    >
+                      {['1K', '2K', '4K'].map((s) => (
+                        <option key={s} value={s}>{s}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Count + 参考图 */}
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 mb-1 block">数量</label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setParams({ ...params, count: n })}
+                        className={`h-8 text-xs rounded-lg border transition-colors ${
+                          params.count === n
+                            ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
+                            : 'bg-dark-bg border-dark-border text-gray-300 hover:bg-dark-border'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 参考图按钮 */}
+                <div className="relative">
+                  <label className="text-xs text-gray-500 mb-1 block">参考图</label>
+                  <button
+                    onClick={() => setShowRefPopover(!showRefPopover)}
+                    className={`h-8 px-3 flex items-center gap-1.5 rounded-lg border transition-colors ${
+                      refImages.length > 0
+                        ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
+                        : 'bg-dark-bg border-dark-border text-gray-400 hover:text-white hover:border-gray-600'
+                    }`}
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span className="text-xs">{refImages.length}/{maxRefImages}</span>
+                  </button>
+                  {/* 参考图弹出层 */}
+                  {showRefPopover && (
+                    <div className="absolute bottom-full right-0 mb-2 w-64 bg-dark-surface border border-dark-border rounded-lg p-3 shadow-xl z-10">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-gray-400">参考图 ({refImages.length}/{maxRefImages})</span>
+                        <button
+                          type="button"
+                          aria-label="关闭参考图"
+                          onClick={() => setShowRefPopover(false)}
+                          className="text-gray-500 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {refImages.length > 0 && (
+                        <div className="grid grid-cols-4 gap-1.5 mb-2">
+                          {refImages.map((img, idx) => (
+                            <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-dark-border group">
+                              <img src={img} alt={`Ref ${idx}`} className="w-full h-full object-cover" />
+                              <button
+                                onClick={() => removeRefImage(idx)}
+                                aria-label="移除参考图"
+                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                              >
+                                <X className="w-3 h-3 text-white" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <label className="flex items-center justify-center h-8 text-xs text-gray-400 hover:text-white border border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer transition-colors">
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        添加参考图
+                        <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 生成按钮 */}
+            <div className="w-full lg:w-[100px] lg:shrink-0 flex items-center">
+              <button
+                onClick={isGenerating ? handleStop : handleGenerate}
+                disabled={!isGenerating && !canGenerate}
+                className={`w-full h-full min-h-[80px] rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                  !canGenerate && !isGenerating
+                    ? 'bg-dark-bg text-gray-500 cursor-not-allowed border border-dark-border'
+                    : isGenerating
+                      ? 'bg-red-500 hover:bg-red-400 text-black'
+                      : 'bg-banana-500 hover:bg-banana-400 text-black shadow-lg shadow-banana-500/20'
+                }`}
+              >
+                {isGenerating ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    <span className="text-xs">停止</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span className="text-sm">生成</span>
+                    <span className="text-xs opacity-70">×{params.count}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

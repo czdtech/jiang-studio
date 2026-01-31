@@ -52,6 +52,7 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onRemove }) => {
       <p className="flex-1 text-sm text-white">{toast.message}</p>
       <button
         onClick={onRemove}
+        aria-label="关闭提示"
         className="text-gray-400 hover:text-white transition-colors"
       >
         <X className="w-4 h-4" />

@@ -12,6 +12,10 @@ export interface GeminiPart {
     data: string;
     mimeType: string;
   };
+  fileData?: {
+    fileUri: string;
+    mimeType: string;
+  };
 }
 
 export interface GeminiCandidate {

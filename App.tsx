@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Sparkles, Plug } from 'lucide-react';
 import { GeneratedImage, GenerationParams, GeminiSettings, ModelType, ProviderProfile, ProviderScope } from './types';
 import { editImage as editGeminiImage } from './services/gemini';
 import { editImage as editOpenAIImage } from './services/openai';
@@ -11,6 +10,7 @@ import { PortfolioGrid } from './components/PortfolioGrid';
 import { OpenAIPage } from './components/OpenAIPage';
 import { GeminiPage } from './components/GeminiPage';
 import { KiePage } from './components/KiePage';
+import { Sidebar } from './components/Sidebar';
 import { getActiveProviderId, getProviders } from './services/db';
 
 type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio';
@@ -174,107 +174,57 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-dark-bg text-gray-200 font-sans selection:bg-banana-500 selection:text-black">
-      {/* Navbar */}
-      <nav className="border-b border-dark-border bg-dark-surface/50 backdrop-blur sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center gap-8">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-banana-400 to-banana-600 rounded-lg flex items-center justify-center">
-              <Sparkles className="text-black w-5 h-5" />
-            </div>
-            <h1 className="text-xl font-bold text-white tracking-tight">Nano Banana Studio</h1>
-          </div>
+      {/* Sidebar Navigation */}
+      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
-          <div className="flex items-center gap-6">
-            <button
-              onClick={() => setActiveTab('gemini')}
-              className={`text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                activeTab === 'gemini' ? 'text-banana-400' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" /> Gemini 官方
-            </button>
-            <button
-              onClick={() => setActiveTab('openai_proxy')}
-              className={`text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                activeTab === 'openai_proxy' ? 'text-banana-400' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Plug className="w-4 h-4" /> 第三方中转
-            </button>
-            <button
-              onClick={() => setActiveTab('antigravity_tools')}
-              className={`text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                activeTab === 'antigravity_tools' ? 'text-banana-400' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Plug className="w-4 h-4" /> Antigravity Tools
-            </button>
-            <button
-              onClick={() => setActiveTab('kie')}
-              className={`text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                activeTab === 'kie' ? 'text-banana-400' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              <Plug className="w-4 h-4" /> Kie AI
-            </button>
-            <button
-              onClick={() => setActiveTab('portfolio')}
-              className={`text-sm font-medium transition-colors ${
-                activeTab === 'portfolio' ? 'text-banana-400' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              Portfolio
-            </button>
-          </div>
+      {/* Main Content - Top margin for header */}
+      <main className="min-h-screen pb-14 md:pb-0 md:pt-12">
+        <div className="h-[calc(100vh-48px)] md:h-[calc(100vh-48px)] max-w-7xl mx-auto">
+          {activeTab === 'gemini' && (
+            <GeminiPage
+              saveImage={saveImage}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          )}
+
+          {activeTab === 'openai_proxy' && (
+            <OpenAIPage
+              variant="third_party"
+              portfolio={portfolio}
+              saveImage={saveImage}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          )}
+
+          {activeTab === 'antigravity_tools' && (
+            <OpenAIPage
+              variant="antigravity_tools"
+              portfolio={portfolio}
+              saveImage={saveImage}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          )}
+
+          {activeTab === 'kie' && (
+            <KiePage
+              saveImage={saveImage}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          )}
+
+          {activeTab === 'portfolio' && (
+            <PortfolioGrid
+              images={portfolio}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+              onDelete={deleteImage}
+            />
+          )}
         </div>
-      </nav>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {activeTab === 'gemini' && (
-          <GeminiPage
-            saveImage={saveImage}
-            onImageClick={(images, index) => setPreviewData({ images, index })}
-            onEdit={setEditingImage}
-          />
-        )}
-
-        {activeTab === 'openai_proxy' && (
-          <OpenAIPage
-            variant="third_party"
-            portfolio={portfolio}
-            saveImage={saveImage}
-            onImageClick={(images, index) => setPreviewData({ images, index })}
-            onEdit={setEditingImage}
-          />
-        )}
-
-        {activeTab === 'antigravity_tools' && (
-          <OpenAIPage
-            variant="antigravity_tools"
-            portfolio={portfolio}
-            saveImage={saveImage}
-            onImageClick={(images, index) => setPreviewData({ images, index })}
-            onEdit={setEditingImage}
-          />
-        )}
-
-        {activeTab === 'kie' && (
-          <KiePage
-            saveImage={saveImage}
-            onImageClick={(images, index) => setPreviewData({ images, index })}
-            onEdit={setEditingImage}
-          />
-        )}
-
-        {activeTab === 'portfolio' && (
-          <PortfolioGrid
-            images={portfolio}
-            onImageClick={(images, index) => setPreviewData({ images, index })}
-            onEdit={setEditingImage}
-            onDelete={deleteImage}
-          />
-        )}
       </main>
 
       <EditorModal

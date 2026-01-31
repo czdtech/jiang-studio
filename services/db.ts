@@ -1,4 +1,4 @@
-import { GeneratedImage, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
+import { GeneratedImage, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
 
 const DB_NAME = 'NanoBananaDB';
 const IMAGE_STORE = 'images';
@@ -83,6 +83,26 @@ export const setGalleryDirectoryHandle = async (handle: FileSystemDirectoryHandl
 export const clearGalleryDirectoryHandle = async (): Promise<void> => {
   await deleteSetting(GALLERY_DIR_KEY);
 };
+
+// ============ Prompt Optimizer ============
+
+const PROMPT_OPTIMIZER_KEY = 'promptOptimizerConfig';
+
+export const getPromptOptimizerConfig = async (): Promise<PromptOptimizerConfig | null> => {
+  return getSetting<PromptOptimizerConfig>(PROMPT_OPTIMIZER_KEY);
+};
+
+export const setPromptOptimizerConfig = async (config: PromptOptimizerConfig): Promise<void> => {
+  await setSetting(PROMPT_OPTIMIZER_KEY, config);
+};
+
+export const createDefaultPromptOptimizerConfig = (): PromptOptimizerConfig => ({
+  enabled: false,
+  apiKey: '',
+  baseUrl: 'https://api.openai.com',
+  model: 'gpt-4o-mini',
+  updatedAt: Date.now(),
+});
 
 // ============ Providers ============
 

@@ -1,14 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Plug, RefreshCw, Wand2, Plus, X, Star, Trash2, ChevronDown, HelpCircle } from 'lucide-react';
-import { GeneratedImage, GenerationParams, ModelType, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Plug, RefreshCw, Wand2, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
 import { generateImages, KieSettings, optimizePrompt as optimizePromptKie } from '../services/kie';
+import { optimizePrompt as optimizePromptOpenAI } from '../services/openai';
 import { useToast } from './Toast';
-import { Tooltip } from './Tooltip';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
+import { PromptOptimizerSettings } from './PromptOptimizerSettings';
+import { SamplePromptChips } from './SamplePromptChips';
 import {
   deleteProvider as deleteProviderFromDb,
   getActiveProviderId as getActiveProviderIdFromDb,
   getDraft as getDraftFromDb,
+  getPromptOptimizerConfig,
   getProviders as getProvidersFromDb,
   setActiveProviderId as setActiveProviderIdInDb,
   upsertDraft as upsertDraftInDb,
@@ -110,7 +113,31 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
   const [customModel, setCustomModel] = useState('nano-banana-pro');
-  const [optimizerModel, setOptimizerModel] = useState<string>(''); // 自定义优化模型
+  const [optimizerModel, setOptimizerModel] = useState<string>('gpt-4o-mini'); // 自定义优化模型
+
+  // 参考图弹出层
+  const [showRefPopover, setShowRefPopover] = useState(false);
+
+  // 独立的 Prompt 优化器配置
+  const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
+
+  // 初始化加载独立优化器配置
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      const config = await getPromptOptimizerConfig();
+      if (cancelled) return;
+      if (config?.enabled) {
+        setOptimizerConfig(config);
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleOptimizerConfigChange = useCallback((config: PromptOptimizerConfig | null) => {
+    setOptimizerConfig(config);
+  }, []);
 
   // Params
   const [params, setParams] = useState<GenerationParams>({
@@ -265,7 +292,41 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const handleToggleFavorite = () => setProviderFavorite((v) => !v);
 
   const handleOptimizePrompt = async () => {
-    if (!prompt) return;
+    if (!prompt.trim()) return;
+
+    // 优先使用独立配置
+    if (optimizerConfig?.enabled) {
+      if (!optimizerConfig.apiKey) {
+        showToast('请先在优化器设置中填写 API Key', 'error');
+        return;
+      }
+      if (!optimizerConfig.baseUrl) {
+        showToast('请先在优化器设置中填写 Base URL', 'error');
+        return;
+      }
+      if (!optimizerConfig.model.trim()) {
+        showToast('请先在优化器设置中填写模型名', 'error');
+        return;
+      }
+
+      setIsOptimizing(true);
+      try {
+        const newPrompt = await optimizePromptOpenAI(
+          prompt,
+          { apiKey: optimizerConfig.apiKey, baseUrl: optimizerConfig.baseUrl },
+          optimizerConfig.model
+        );
+        setPrompt(newPrompt);
+        showToast('提示词已增强', 'success');
+      } catch (err) {
+        showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
+      } finally {
+        setIsOptimizing(false);
+      }
+      return;
+    }
+
+    // 回退到页面自带配置
     if (!optimizerModel.trim()) {
       showToast('请先设置提示词优化模型', 'error');
       return;
@@ -283,9 +344,9 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     try {
       const newPrompt = await optimizePromptKie(prompt, settings, optimizerModel);
       setPrompt(newPrompt);
-      showToast('Prompt enhanced successfully', 'success');
+      showToast('提示词已增强', 'success');
     } catch (err) {
-      showToast('Failed to enhance prompt: ' + (err instanceof Error ? err.message : 'Unknown'), 'error');
+      showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
     } finally {
       setIsOptimizing(false);
     }
@@ -375,7 +436,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
         showToast('已停止生成', 'info');
         return;
       }
-      showToast('生成错误：' + (e instanceof Error ? e.message : 'Unknown'), 'error');
+      showToast('生成错误：' + (e instanceof Error ? e.message : '未知错误'), 'error');
     } finally {
       if (!isMountedRef.current) return;
       if (generationRunIdRef.current !== runId) return;
@@ -420,6 +481,9 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const canGenerate =
+    !!prompt.trim() && !!settings.apiKey.trim() && !!settings.baseUrl.trim() && !!customModel.trim();
+
   const aspectRatioOptions: Array<{ value: GenerationParams['aspectRatio']; label: string }> = [
     { value: 'auto', label: 'Auto' },
     { value: '1:1', label: '1:1' },
@@ -435,266 +499,315 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   ];
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-      {/* Left Controls */}
-      <div className="lg:col-span-4 space-y-6">
-        <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2">
-            <Plug className="w-4 h-4" /> Kie AI Settings
-          </h3>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">供应商</label>
-              <div className="flex gap-2">
-                <select
-                  value={activeProviderId}
-                  onChange={(e) => void handleSelectProvider(e.target.value)}
-                  className="flex-1 bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none"
-                >
-                  {providers.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.favorite ? '★ ' : ''}
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-
-                <button
-                  onClick={() => void handleCreateProvider()}
-                  className="p-2 bg-dark-bg border border-dark-border rounded-lg hover:bg-dark-border transition-colors"
-                  title="复制供应商"
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleToggleFavorite}
-                  className={`p-2 border rounded-lg transition-colors ${
-                    providerFavorite
-                      ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
-                      : 'bg-dark-bg border-dark-border hover:bg-dark-border text-gray-300'
-                  }`}
-                  title="收藏"
-                >
-                  <Star className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => void handleDeleteProvider()}
-                  className="p-2 bg-dark-bg border border-dark-border rounded-lg hover:bg-dark-border transition-colors text-red-300"
-                  title="删除供应商"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">API Key</label>
-              <input
-                type="password"
-                value={settings.apiKey}
-                onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
-                placeholder="YOUR_API_KEY"
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Base URL</label>
-              <input
-                type="text"
-                value={settings.baseUrl}
-                onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
-                placeholder="https://api.kie.ai"
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-            </div>
+    <div className="h-full flex flex-col">
+      {/* 上区：左侧配置 + 右侧图片展示 */}
+      <div className="flex-1 min-h-0 p-4 flex flex-col md:flex-row gap-4">
+        {/* 左侧：API 配置 */}
+        <div className="w-full md:w-[280px] md:shrink-0 max-h-[40vh] md:max-h-none border border-dark-border rounded-xl bg-dark-surface/80 backdrop-blur-sm p-4 space-y-4 overflow-y-auto">
+          <div className="flex items-center gap-1.5">
+            <Plug className="w-4 h-4 text-banana-500" />
+            <span className="text-sm font-medium text-white">Kie AI 设置</span>
           </div>
-        </div>
 
-        {/* Prompt */}
-        <div className="bg-dark-surface p-5 rounded-xl border border-dark-border shadow-lg">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
-              <Wand2 className="w-4 h-4" /> Prompt
-            </h3>
-            <button
-              onClick={handleOptimizePrompt}
-              disabled={isOptimizing || !prompt || !optimizerModel.trim()}
-              className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50"
-              title={!optimizerModel.trim() ? '请先在下方设置优化模型' : ''}
+          {/* 供应商选择 */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-500">供应商</label>
+            <select
+              value={activeProviderId}
+              onChange={(e) => void handleSelectProvider(e.target.value)}
+              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer"
             >
-              <Wand2 className="w-3 h-3" /> {isOptimizing ? 'Optimizing...' : 'Enhance'}
-            </button>
+              {providers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {(p.favorite ? '★ ' : '') + p.name}
+                </option>
+              ))}
+            </select>
+            <div className="flex gap-1.5">
+              <button
+                type="button"
+                onClick={() => void handleCreateProvider()}
+                className="flex-1 h-8 flex items-center justify-center gap-1 rounded-lg border border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600 transition-colors text-xs"
+                title="新增供应商"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                新增
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleFavorite}
+                className={`h-8 w-8 flex items-center justify-center rounded-lg border transition-colors ${
+                  providerFavorite
+                    ? 'border-banana-500/70 bg-banana-500/10 text-banana-400'
+                    : 'border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600'
+                }`}
+                title="收藏"
+                aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
+              >
+                <Star className="w-3.5 h-3.5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteProvider()}
+                className="h-8 w-8 flex items-center justify-center rounded-lg border border-dark-border bg-dark-bg text-gray-400 hover:text-red-400 hover:border-red-500/50 transition-colors"
+                title="删除供应商"
+                aria-label="删除供应商"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
-          <textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder="输入提示词..."
-            className="w-full h-28 bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600 resize-none"
-          />
+          {/* API Key */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-500">API Key</label>
+            <input
+              type="password"
+              value={settings.apiKey}
+              onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
+              placeholder="API Key"
+              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+            />
+            {!settings.apiKey.trim() && (
+              <p className="text-xs text-yellow-500/80">未填写 API Key，生成/增强将不可用。</p>
+            )}
+          </div>
 
-          {/* Optimizer Model Setting */}
-          <div className="mt-3 pt-3 border-t border-dark-border">
-            <div className="flex items-center gap-1.5 mb-2">
-              <label className="text-xs text-gray-400">优化模型</label>
-              <Tooltip content="填写支持 Chat Completions API 的文本模型&#10;示例: gpt-4o, qwen-plus, qwen-turbo&#10;根据 Kie AI 支持的模型填写&#10;&#10;注意: Kie AI 不提供 /v1/models 接口&#10;请参考官方文档手动输入模型名称">
-                <HelpCircle className="w-3.5 h-3.5 text-gray-500 cursor-help" />
-              </Tooltip>
-            </div>
+          {/* Base URL */}
+          <div className="space-y-2">
+            <label className="text-xs text-gray-500">Base URL</label>
             <input
               type="text"
-              value={optimizerModel}
-              onChange={(e) => setOptimizerModel(e.target.value)}
-              placeholder="gpt-4o, qwen-plus..."
-              className="w-full text-xs bg-dark-bg border border-dark-border rounded px-2 py-1.5 text-white placeholder-gray-500"
+              value={settings.baseUrl}
+              onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
+              placeholder="https://api.kie.ai"
+              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
             />
-          </div>
-
-          {/* Params */}
-          <div className="grid grid-cols-2 gap-3 mt-4">
-            <div className="col-span-2">
-              <label className="block text-xs text-gray-500 mb-1">Model</label>
-              <input
-                type="text"
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="nano-banana-pro"
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none placeholder-gray-600"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Aspect Ratio</label>
-              <select
-                value={params.aspectRatio}
-                onChange={(e) =>
-                  setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))
-                }
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none"
-              >
-                {aspectRatioOptions.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Resolution</label>
-              <select
-                value={params.imageSize}
-                onChange={(e) =>
-                  setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))
-                }
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none"
-              >
-                <option value="1K">1K</option>
-                <option value="2K">2K</option>
-                <option value="4K">4K</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Output</label>
-              <select
-                value={params.outputFormat || 'png'}
-                onChange={(e) =>
-                  setParams((prev) => ({
-                    ...prev,
-                    outputFormat: e.target.value as NonNullable<GenerationParams['outputFormat']>,
-                  }))
-                }
-                className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-sm text-white focus:ring-1 focus:ring-banana-500 outline-none"
-              >
-                <option value="png">png</option>
-                <option value="jpg">jpg</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs text-gray-500 mb-1">Count</label>
-              <div className="grid grid-cols-4 gap-1">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setParams((prev) => ({ ...prev, count: n }))}
-                    className={`py-2 text-sm rounded-lg border transition-colors ${
-                      params.count === n
-                        ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
-                        : 'bg-dark-bg border-dark-border text-gray-300 hover:bg-dark-border'
-                    }`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Reference Images */}
-          <div className="mt-4">
-            <label className="block text-xs text-gray-500 mb-2">Reference Images（可选，最多 8 张）</label>
-            <div className="flex flex-wrap gap-2 mb-3">
-              {refImages.map((img, index) => (
-                <div key={index} className="relative w-16 h-16">
-                  <img src={img} alt={`ref-${index}`} className="w-16 h-16 object-cover rounded-lg border border-dark-border" />
-                  <button
-                    onClick={() => removeRefImage(index)}
-                    className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <input
-              type="file"
-              accept="image/*"
-              multiple
-              onChange={handleFileUpload}
-              className="w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-dark-bg file:text-white hover:file:bg-dark-border"
-            />
-            <p className="mt-2 text-xs text-gray-500">
-              Kie 的 <span className="text-gray-300">image_input</span> 只接受 URL；本地图片会先自动上传为 URL（用于图生图/参考图）。
-            </p>
-          </div>
-
-          {/* Generate Button */}
-          <button
-            onClick={isGenerating ? handleStop : handleGenerate}
-            disabled={!prompt.trim() || !settings.apiKey || !settings.baseUrl || !customModel.trim()}
-            className={`mt-5 w-full py-3 rounded-xl font-bold transition-all transform ${
-              (!prompt.trim() || !settings.apiKey || !settings.baseUrl || !customModel.trim()) && !isGenerating
-                ? 'bg-dark-surface text-gray-500 cursor-not-allowed'
-                : isGenerating
-                  ? 'bg-red-500 hover:bg-red-400 text-black hover:scale-[1.02]'
-                  : 'bg-banana-500 hover:bg-banana-400 text-black hover:scale-[1.02]'
-            }`}
-          >
-            {isGenerating ? (
-              <span className="flex items-center justify-center gap-2">
-                <RefreshCw className="w-5 h-5 animate-spin" /> 点击停止
-              </span>
-            ) : (
-              `Generate ${params.count} Image${params.count > 1 ? 's' : ''}`
+            {!settings.baseUrl.trim() && (
+              <p className="text-xs text-yellow-500/80">未填写 Base URL，生成/增强将不可用。</p>
             )}
-          </button>
+          </div>
+
+          {/* Prompt 优化器配置（内联） */}
+          <PromptOptimizerSettings onConfigChange={handleOptimizerConfigChange} />
+        </div>
+
+        {/* 右侧：图片展示 */}
+        <div className="flex-1 min-w-0 overflow-auto">
+          <ImageGrid
+            images={generatedImages}
+            slots={generatedSlots}
+            isGenerating={isGenerating}
+            params={params}
+            onImageClick={onImageClick}
+            onEdit={onEdit}
+          />
         </div>
       </div>
 
-      {/* Right Display Grid */}
-      <div className="lg:col-span-8">
-        <ImageGrid
-          images={generatedImages}
-          slots={generatedSlots}
-          isGenerating={isGenerating}
-          params={params}
-          onImageClick={onImageClick}
-          onEdit={onEdit}
-        />
+      {/* 下区：Prompt + 参数 + 生成（全宽） */}
+      <div className="shrink-0 px-4 pb-4">
+        <div className="border border-dark-border rounded-xl bg-dark-surface/80 backdrop-blur-sm p-4">
+          <div className="flex flex-col lg:flex-row items-stretch gap-4 w-full overflow-hidden">
+            {/* Prompt */}
+            <div className="flex-1 min-w-0 flex flex-col">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-gray-500">提示词</span>
+                <div className="flex items-center gap-2">
+                  {!optimizerConfig?.enabled && (
+                    <input
+                      type="text"
+                      value={optimizerModel}
+                      onChange={(e) => setOptimizerModel(e.target.value)}
+                      placeholder="优化模型（如 gpt-4o-mini）"
+                      className="w-44 h-6 text-xs bg-dark-bg border border-dark-border rounded px-2 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
+                    />
+                  )}
+                  <button
+                    onClick={handleOptimizePrompt}
+                    disabled={isOptimizing || !prompt || (!optimizerConfig?.enabled && !optimizerModel.trim())}
+                    className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Wand2 className="w-3 h-3" />
+                    {isOptimizing ? '优化中…' : '增强'}
+                  </button>
+                </div>
+              </div>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="描述你的想法…"
+                className="flex-1 min-h-[80px] resize-none text-sm bg-dark-bg border border-dark-border rounded-lg p-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+              />
+              {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
+            </div>
+
+            {/* 参数区 */}
+            <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2">
+              {/* Model + Ratio + Size */}
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">模型</label>
+                  <input
+                    type="text"
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    placeholder="nano-banana-pro"
+                    className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">比例</label>
+                  <div className="relative">
+                    <select
+                      value={params.aspectRatio}
+                      onChange={(e) => setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))}
+                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                    >
+                      {aspectRatioOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-500 mb-1 block">尺寸</label>
+                  <div className="relative">
+                    <select
+                      value={params.imageSize}
+                      onChange={(e) => setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))}
+                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                    >
+                      <option value="1K">1K</option>
+                      <option value="2K">2K</option>
+                      <option value="4K">4K</option>
+                    </select>
+                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Output + Count + 参考图 */}
+              <div className="flex items-center gap-2">
+                <div className="w-16">
+                  <label className="text-xs text-gray-500 mb-1 block">格式</label>
+                  <div className="relative">
+                    <select
+                      value={params.outputFormat || 'png'}
+                      onChange={(e) => setParams((prev) => ({ ...prev, outputFormat: e.target.value as NonNullable<GenerationParams['outputFormat']> }))}
+                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-5 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                    >
+                      <option value="png">png</option>
+                      <option value="jpg">jpg</option>
+                    </select>
+                    <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-500 mb-1 block">数量</label>
+                  <div className="grid grid-cols-4 gap-1">
+                    {[1, 2, 3, 4].map((n) => (
+                      <button
+                        key={n}
+                        onClick={() => setParams((prev) => ({ ...prev, count: n }))}
+                        className={`h-8 text-xs rounded-lg border transition-colors ${
+                          params.count === n
+                            ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
+                            : 'bg-dark-bg border-dark-border text-gray-300 hover:bg-dark-border'
+                        }`}
+                      >
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {/* 参考图按钮 */}
+                <div className="relative">
+                  <label className="text-xs text-gray-500 mb-1 block">参考图</label>
+                  <button
+                    onClick={() => setShowRefPopover(!showRefPopover)}
+                    className={`h-8 px-3 flex items-center gap-1.5 rounded-lg border transition-colors ${
+                      refImages.length > 0
+                        ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
+                        : 'bg-dark-bg border-dark-border text-gray-400 hover:text-white hover:border-gray-600'
+                    }`}
+                  >
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    <span className="text-xs">{refImages.length}/8</span>
+                  </button>
+                  {/* 参考图弹出层 */}
+                  {showRefPopover && (
+                    <div className="absolute bottom-full right-0 mb-2 w-64 bg-dark-surface border border-dark-border rounded-lg p-3 shadow-xl z-10">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-gray-400">参考图 ({refImages.length}/8)</span>
+                        <button
+                          type="button"
+                          aria-label="关闭参考图"
+                          onClick={() => setShowRefPopover(false)}
+                          className="text-gray-500 hover:text-white"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      {refImages.length > 0 && (
+                        <div className="grid grid-cols-4 gap-1.5 mb-2">
+                          {refImages.map((img, idx) => (
+                            <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-dark-border group">
+                              <img src={img} alt={`Ref ${idx}`} className="w-full h-full object-cover" />
+                              <button
+                                onClick={() => removeRefImage(idx)}
+                                aria-label="移除参考图"
+                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                              >
+                                <X className="w-3 h-3 text-white" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <label className="flex items-center justify-center h-8 text-xs text-gray-400 hover:text-white border border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer transition-colors">
+                        <Plus className="w-3.5 h-3.5 mr-1" />
+                        添加参考图
+                        <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 生成按钮 */}
+            <div className="w-full lg:w-[100px] lg:shrink-0 flex items-center">
+              <button
+                onClick={isGenerating ? handleStop : handleGenerate}
+                disabled={
+                  !isGenerating && !canGenerate
+                }
+                className={`w-full h-full min-h-[80px] rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+                  !canGenerate && !isGenerating
+                    ? 'bg-dark-bg text-gray-500 cursor-not-allowed border border-dark-border'
+                    : isGenerating
+                      ? 'bg-red-500 hover:bg-red-400 text-black'
+                      : 'bg-banana-500 hover:bg-banana-400 text-black shadow-lg shadow-banana-500/20'
+                }`}
+              >
+                {isGenerating ? (
+                  <>
+                    <RefreshCw className="w-5 h-5 animate-spin" />
+                    <span className="text-xs">停止</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span className="text-sm">生成</span>
+                    <span className="text-xs opacity-70">×{params.count}</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

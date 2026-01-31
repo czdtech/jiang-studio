@@ -499,7 +499,8 @@ export const generateImages = async (
   for (const r of results) outcomes[r.index] = r.outcome;
   if (signal?.aborted) {
     for (let i = 0; i < outcomes.length; i++) {
-      if (outcomes[i].ok === false && outcomes[i].error === 'Unknown error') {
+      const o = outcomes[i];
+      if (o.ok === false && o.error === 'Unknown error') {
         outcomes[i] = { ok: false, error: '已停止' } as const;
       }
     }

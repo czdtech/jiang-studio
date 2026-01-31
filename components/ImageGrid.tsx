@@ -30,7 +30,8 @@ export const ImageGrid = ({
     return (
       <div className="h-full min-h-[500px] flex flex-col items-center justify-center text-gray-500 bg-dark-surface/30 rounded-2xl border-2 border-dashed border-dark-border">
         <Image className="w-16 h-16 mb-4 opacity-20" />
-        <p>Your creations will appear here.</p>
+        <p className="text-sm text-gray-400">生成结果会显示在这里</p>
+        <p className="mt-2 text-xs text-gray-600">在下方输入提示词后点击“生成”开始</p>
       </div>
     );
   }
@@ -57,7 +58,7 @@ export const ImageGrid = ({
                 key={slot.id}
                 className="aspect-square bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center"
               >
-                <Sparkles className="text-banana-500/20 w-12 h-12 animate-bounce" />
+                <Sparkles className="text-banana-500/30 w-12 h-12 animate-pulse" />
               </div>
             );
           }
@@ -85,24 +86,33 @@ export const ImageGrid = ({
           return (
             <div
               key={slot.id}
-              className="group relative aspect-square bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-zoom-in"
+              role="button"
+              tabIndex={0}
+              className="group relative aspect-square bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
               onClick={() => onImageClick(successImages, idx)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onImageClick(successImages, idx);
+                }
+              }}
             >
               <img src={img.base64} alt={img.prompt} className="w-full h-full object-contain" />
 
               {/* Overlay Controls */}
-              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
+              <div className="absolute inset-0 bg-black/60 opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
                 <div className="flex gap-2">
                   <button
                     onClick={(e) => { e.stopPropagation(); onEdit(img); }}
                     className="bg-white text-black px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-banana-400 transition-colors"
                   >
-                    <Edit className="w-4 h-4" /> Edit
+                    <Edit className="w-4 h-4" /> 编辑
                   </button>
                   <a
                     href={img.base64}
                     download={`nano-banana-${img.id}.png`}
                     onClick={(e) => e.stopPropagation()}
+                    aria-label="下载图片"
                     className="bg-dark-surface text-white px-3 py-2 rounded-lg border border-dark-border hover:bg-dark-border"
                   >
                     <Download className="w-4 h-4" />
@@ -129,31 +139,40 @@ export const ImageGrid = ({
         // Simple Skeleton
         Array.from({ length: params.count }).map((_, i) => (
           <div key={i} className="aspect-square bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center">
-            <Sparkles className="text-banana-500/20 w-12 h-12 animate-bounce" />
+            <Sparkles className="text-banana-500/30 w-12 h-12 animate-pulse" />
           </div>
         ))
       )}
       {images.map((img, idx) => (
         <div
           key={img.id}
-          className="group relative aspect-square bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-zoom-in"
+          role="button"
+          tabIndex={0}
+          className="group relative aspect-square bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
           onClick={() => onImageClick(images, idx)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onImageClick(images, idx);
+            }
+          }}
         >
           <img src={img.base64} alt={img.prompt} className="w-full h-full object-contain" />
 
           {/* Overlay Controls */}
-          <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
+          <div className="absolute inset-0 bg-black/60 opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
             <div className="flex gap-2">
               <button
                 onClick={(e) => { e.stopPropagation(); onEdit(img); }}
                 className="bg-white text-black px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-banana-400 transition-colors"
               >
-                <Edit className="w-4 h-4" /> Edit
+                <Edit className="w-4 h-4" /> 编辑
               </button>
               <a
                 href={img.base64}
                 download={`nano-banana-${img.id}.png`}
                 onClick={(e) => e.stopPropagation()}
+                aria-label="下载图片"
                 className="bg-dark-surface text-white px-3 py-2 rounded-lg border border-dark-border hover:bg-dark-border"
               >
                 <Download className="w-4 h-4" />

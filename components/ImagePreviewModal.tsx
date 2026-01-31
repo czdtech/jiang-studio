@@ -82,7 +82,7 @@ export const ImagePreviewModal = ({
   return (
     <div className="fixed inset-0 z-[60] flex flex-col bg-black/95 backdrop-blur-sm text-white">
        {/* Top Controls */}
-       <div className="shrink-0 p-4 flex justify-between items-center bg-dark-surface/50 border-b border-dark-border">
+       <div className="shrink-0 p-4 flex justify-between items-center bg-dark-surface/60 backdrop-blur-sm border-b border-dark-border">
           <div className="flex gap-2 text-sm font-mono text-gray-400">
              <span>{safeIndex + 1} / {data.images.length}</span>
              <span className="text-gray-600">|</span>
@@ -93,17 +93,19 @@ export const ImagePreviewModal = ({
                onClick={() => { onClose(); onEdit(currentImage); }}
                className="flex items-center gap-2 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors text-sm"
              >
-               <Edit className="w-4 h-4" /> Edit
+               <Edit className="w-4 h-4" /> 编辑
              </button>
              <a 
                href={displayUrl} 
                download={downloadName}
+               aria-label="下载图片"
                className="p-2 bg-white/10 hover:bg-white/20 text-white rounded-lg transition-colors"
              >
                <Download className="w-5 h-5" />
              </a>
              <button 
                onClick={onClose}
+               aria-label="关闭预览"
                className="p-2 hover:bg-red-500/20 hover:text-red-500 text-gray-400 transition-colors rounded-lg"
              >
                <X className="w-6 h-6" />
@@ -116,7 +118,8 @@ export const ImagePreviewModal = ({
           {hasPrev && (
             <button 
               onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
-              className="absolute left-4 p-3 bg-black/50 hover:bg-banana-500 text-white hover:text-black rounded-full transition-all hover:scale-110 z-20"
+              aria-label="上一张"
+              className="absolute left-4 p-3 bg-black/50 hover:bg-banana-500 text-white hover:text-black rounded-full transition-colors z-20"
             >
               <ChevronLeft className="w-8 h-8" />
             </button>
@@ -131,7 +134,8 @@ export const ImagePreviewModal = ({
           {hasNext && (
             <button 
               onClick={() => setCurrentIndex((i) => Math.min(data.images.length - 1, i + 1))}
-              className="absolute right-4 p-3 bg-black/50 hover:bg-banana-500 text-white hover:text-black rounded-full transition-all hover:scale-110 z-20"
+              aria-label="下一张"
+              className="absolute right-4 p-3 bg-black/50 hover:bg-banana-500 text-white hover:text-black rounded-full transition-colors z-20"
             >
               <ChevronRight className="w-8 h-8" />
             </button>
@@ -139,7 +143,7 @@ export const ImagePreviewModal = ({
        </div>
 
        {/* Bottom Info Area */}
-       <div className="shrink-0 p-6 bg-dark-surface border-t border-dark-border">
+       <div className="shrink-0 p-6 bg-dark-surface/60 backdrop-blur-sm border-t border-dark-border">
           <p className="text-white text-base md:text-lg max-w-4xl mx-auto text-center">{currentImage.prompt}</p>
           <p className="text-gray-500 text-xs mt-2 text-center">{new Date(currentImage.timestamp).toLocaleString()}</p>
        </div>
