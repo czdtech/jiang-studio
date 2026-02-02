@@ -1,11 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Wand2, Plus, ChevronDown, X, Plug, Star, Trash2, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { RefreshCw, Plus, ChevronDown, X, Plug, Star, Trash2, Sparkles, Image as ImageIcon } from 'lucide-react';
 import { OpenAISettings, GeneratedImage, GenerationParams, ModelType, ProviderProfile, ProviderScope, ProviderDraft, PromptOptimizerConfig } from '../types';
-import { generateImages, optimizePrompt as optimizePromptOpenAI } from '../services/openai';
+import { generateImages } from '../services/openai';
+import { optimizeUserPrompt } from '../services/mcp';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
+import { IterationAssistant } from './IterationAssistant';
 import { SamplePromptChips } from './SamplePromptChips';
+import {
+  getGenerateButtonStyles,
+  getCountButtonStyles,
+  getFavoriteButtonStyles,
+  getRefImageButtonStyles,
+  inputBaseStyles,
+  textareaBaseStyles,
+  selectBaseStyles,
+  selectSmallStyles,
+} from './uiStyles';
 import {
   deleteProvider as deleteProviderFromDb,
   getActiveProviderId as getActiveProviderIdFromDb,
@@ -57,25 +69,6 @@ const isTextModelId = (id: string): boolean => {
   return textKeywords.some(keyword => s.includes(keyword));
 };
 
-const pickDefaultOptimizerModelId = (ids: string[]): string => {
-  const list = ids.map((id) => id.trim()).filter(Boolean);
-  if (list.length === 0) return '';
-
-  const lowered = list.map((id) => ({ id, s: id.toLowerCase() }));
-  const preferContains = ['gpt-4o-mini', 'claude-3-haiku', 'deepseek-chat', 'gpt-4o'];
-
-  for (const key of preferContains) {
-    const hit = lowered.find((m) => m.s.includes(key));
-    if (hit) return hit.id;
-  }
-
-  // 没命中常见推荐时，优先挑更“轻量/便宜”的命名
-  const cheapHint = lowered.find((m) => ['mini', 'haiku', 'flash'].some((k) => m.s.includes(k)));
-  if (cheapHint) return cheapHint.id;
-
-  return list[0];
-};
-
 const inferAntigravityImageConfigFromModelId = (
   modelId: string
 ): { aspectRatio?: GenerationParams['aspectRatio']; imageSize?: GenerationParams['imageSize'] } => {
@@ -107,7 +100,7 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
       scope,
       name: '本地反代',
       apiKey: 'sk-antigravity',
-      baseUrl: 'http://127.0.0.1:8045',
+      baseUrl: '/antigravity',
       defaultModel: 'gemini-3-pro-image',
       favorite: true,
       createdAt: now,
@@ -146,6 +139,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const abortControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
   const generationRunIdRef = useRef(0);
+  const generateLockRef = useRef(false);
   const isMountedRef = useRef(false);
 
   useEffect(() => {
@@ -200,7 +194,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     if (variant === 'antigravity_tools') {
       return {
         apiKey: 'sk-antigravity',
-        baseUrl: 'http://127.0.0.1:8045',
+        baseUrl: '/antigravity',
       };
     }
     return { apiKey: '', baseUrl: 'https://api.openai.com' };
@@ -211,7 +205,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
-  const [optimizerModel, setOptimizerModel] = useState<string>(''); // 自定义优化模型
 
   const [customModel, setCustomModel] = useState(() => (
     variant === 'antigravity_tools' ? 'gemini-3-pro-image' : 'gemini-3-pro-image'
@@ -251,14 +244,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsHint, setModelsHint] = useState<string>('');
 
-  // 当未启用独立优化器配置时，尽量从已加载的文本模型中自动挑一个默认值，避免 Enhance 永远不可用
-  useEffect(() => {
-    if (optimizerConfig?.enabled) return;
-    if (optimizerModel.trim()) return;
-    if (availableTextModels.length === 0) return;
-
-    setOptimizerModel(pickDefaultOptimizerModelId(availableTextModels));
-  }, [availableTextModels, optimizerConfig?.enabled, optimizerModel]);
 
   // Params
   const [params, setParams] = useState<GenerationParams>({
@@ -566,66 +551,22 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
   const handleOptimizePrompt = async () => {
     if (!prompt.trim()) return;
-
-    // 优先使用独立配置
-    if (optimizerConfig?.enabled) {
-      if (!optimizerConfig.apiKey) {
-        showToast('请先在优化器设置中填写 API Key', 'error');
-        return;
-      }
-      if (!optimizerConfig.baseUrl) {
-        showToast('请先在优化器设置中填写 Base URL', 'error');
-        return;
-      }
-      if (!optimizerConfig.model.trim()) {
-        showToast('请先在优化器设置中填写模型名', 'error');
-        return;
-      }
-
-      setIsOptimizing(true);
-      try {
-        const newPrompt = await optimizePromptOpenAI(
-          prompt,
-          { apiKey: optimizerConfig.apiKey, baseUrl: optimizerConfig.baseUrl },
-          optimizerConfig.model
-        );
-        setPrompt(newPrompt);
-        showToast('提示词已增强', 'success');
-      } catch (err) {
-        showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
-      } finally {
-        setIsOptimizing(false);
-      }
-      return;
-    }
-
-    // 回退到页面自带配置
-    if (!optimizerModel.trim()) {
-      showToast('请先设置提示词优化模型', 'error');
-      return;
-    }
-    if (!settings.apiKey) {
-      showToast('请先填写 API Key', 'error');
-      return;
-    }
-    if (!settings.baseUrl) {
-      showToast('请先填写 Base URL', 'error');
-      return;
-    }
+    if (!optimizerConfig?.enabled) return;
 
     setIsOptimizing(true);
     try {
-      const newPrompt = await optimizePromptOpenAI(prompt, settings, optimizerModel);
+      const newPrompt = await optimizeUserPrompt(prompt);
       setPrompt(newPrompt);
-      showToast('提示词已增强', 'success');
+      showToast('提示词已优化', 'success');
     } catch (err) {
-      showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
+      showToast('提示词优化失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
     } finally {
       setIsOptimizing(false);
     }
   };
 
   const handleGenerate = async () => {
+    if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
     const model = customModel;
@@ -647,11 +588,33 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     stopRequestedRef.current = false;
     const runId = ++generationRunIdRef.current;
 
+    generateLockRef.current = true;
     setIsGenerating(true);
+
+    // 自动模式：先优化提示词
+    let finalPrompt = prompt;
+    if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
+      try {
+        finalPrompt = await optimizeUserPrompt(prompt);
+        setPrompt(finalPrompt);
+        showToast('提示词已自动优化', 'info');
+      } catch (err) {
+        // 优化失败，询问是否继续
+        const shouldContinue = window.confirm(
+          `提示词优化失败：${err instanceof Error ? err.message : '未知错误'}\n\n是否使用原始提示词继续生成？`
+        );
+        if (!shouldContinue) {
+          generateLockRef.current = false;
+          setIsGenerating(false);
+          return;
+        }
+      }
+    }
+
     try {
       const currentParams: GenerationParams = {
         ...params,
-        prompt,
+        prompt: finalPrompt,
         referenceImages: refImages,
         model: model as ModelType,
       };
@@ -722,6 +685,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
       showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
     } finally {
+      if (generationRunIdRef.current === runId) generateLockRef.current = false;
       if (!isMountedRef.current) return;
       if (generationRunIdRef.current !== runId) return;
       setIsGenerating(false);
@@ -796,7 +760,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             <select
               value={activeProviderId}
               onChange={(e) => void handleSelectProvider(e.target.value)}
-              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer"
+              className={selectBaseStyles}
             >
               {providers.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -817,11 +781,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               <button
                 type="button"
                 onClick={handleToggleFavorite}
-                className={`h-8 w-8 flex items-center justify-center rounded-lg border transition-colors ${
-                  providerFavorite
-                    ? 'border-banana-500/70 bg-banana-500/10 text-banana-400'
-                    : 'border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600'
-                }`}
+                className={getFavoriteButtonStyles(providerFavorite)}
                 title="收藏"
                 aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
               >
@@ -847,7 +807,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               value={settings.apiKey}
               onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
               placeholder="sk-..."
-              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+              className={inputBaseStyles}
             />
             {requiresApiKey && !settings.apiKey.trim() && (
               <p className="text-xs text-yellow-500/80">未填写 API Key，生成/增强将不可用。</p>
@@ -868,7 +828,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   setAvailableImageModels([]);
                   setModelsHint('');
                 }}
-                placeholder="https://api.openai.com"
+                placeholder={variant === 'antigravity_tools' ? '/antigravity' : 'https://api.openai.com'}
                 className="flex-1 h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
               />
               <button
@@ -886,10 +846,15 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
           </div>
 
           {/* Prompt 优化器配置（内联） */}
-          <PromptOptimizerSettings onConfigChange={handleOptimizerConfigChange} />
+          <PromptOptimizerSettings
+            onConfigChange={handleOptimizerConfigChange}
+            currentPrompt={prompt}
+            onOptimize={handleOptimizePrompt}
+            isOptimizing={isOptimizing}
+          />
         </div>
 
-        {/* 右侧：图片展示 */}
+        {/* 中间：图片展示 */}
         <div className="flex-1 min-w-0 overflow-auto">
           <ImageGrid
             images={generatedImages}
@@ -900,6 +865,12 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             onEdit={onEdit}
           />
         </div>
+
+        {/* 右侧：迭代助手 */}
+        <IterationAssistant
+          currentPrompt={prompt}
+          onUseVersion={setPrompt}
+        />
       </div>
 
       {/* 下区：Prompt + 参数 + 生成（全宽） */}
@@ -909,49 +880,13 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             {/* Prompt */}
             <div className="flex-1 min-w-0 flex flex-col">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-500">提示词</span>
-                <button
-                  onClick={handleOptimizePrompt}
-                  disabled={isOptimizing || !prompt || (!optimizerConfig?.enabled && !optimizerModel.trim())}
-                  className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Wand2 className="w-3 h-3" />
-                  {isOptimizing ? '优化中…' : '增强'}
-                </button>
+                <span className="text-sm text-gray-500">提示词</span>
               </div>
-
-              {!optimizerConfig?.enabled && (
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs text-gray-500 shrink-0">优化模型</span>
-                  <div className="relative flex-1">
-                    <input
-                      type="text"
-                      value={optimizerModel}
-                      onChange={(e) => setOptimizerModel(e.target.value)}
-                      placeholder="gpt-4o-mini, claude-3-haiku..."
-                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
-                    />
-                    {availableTextModels.length > 0 && (
-                      <select
-                        value={availableTextModels.includes(optimizerModel) ? optimizerModel : ''}
-                        onChange={(e) => setOptimizerModel(e.target.value)}
-                        className="absolute right-0.5 top-1/2 -translate-y-1/2 h-6 max-w-[160px] bg-dark-bg border border-dark-border rounded px-0.5 text-xs text-gray-400 cursor-pointer"
-                        title="从已刷新的文本模型中快速选择"
-                      >
-                        <option value="">...</option>
-                        {availableTextModels.slice(0, 12).map((id) => (
-                          <option key={id} value={id}>{id}</option>
-                        ))}
-                      </select>
-                    )}
-                  </div>
-                </div>
-              )}
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="描述你的想法…"
-                className="flex-1 min-h-[80px] resize-none text-sm bg-dark-bg border border-dark-border rounded-lg p-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+                className={textareaBaseStyles}
               />
               {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
             </div>
@@ -959,7 +894,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             {/* 参数区 */}
             <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2">
               {/* Model + Ratio + Size */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_76px_76px] gap-2">
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">模型</label>
                   <div className="relative">
@@ -968,7 +903,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                       value={customModel}
                       onChange={(e) => setCustomModel(e.target.value)}
                       placeholder="gemini-3-pro-image"
-                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
+                      className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-xl px-3 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
                     />
                     {availableImageModels.length > 0 && (
                       <select
@@ -992,7 +927,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                         <select
                           value={params.aspectRatio}
                           onChange={(e) => setParams({ ...params, aspectRatio: e.target.value as GenerationParams['aspectRatio'] })}
-                          className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                          className={selectSmallStyles}
                         >
                           {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
                             <option key={r} value={r}>{r}</option>
@@ -1007,7 +942,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                         <select
                           value={params.imageSize}
                           onChange={(e) => setParams({ ...params, imageSize: e.target.value as GenerationParams['imageSize'] })}
-                          className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                          className={selectSmallStyles}
                         >
                           {['1K', '2K', '4K'].map((s) => (
                             <option key={s} value={s}>{s}</option>
@@ -1036,11 +971,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                       <button
                         key={n}
                         onClick={() => setParams({ ...params, count: n })}
-                        className={`h-8 text-xs rounded-lg border transition-colors ${
-                          params.count === n
-                            ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
-                            : 'bg-dark-bg border-dark-border text-gray-300 hover:bg-dark-border'
-                        }`}
+                        className={getCountButtonStyles(params.count === n)}
                       >
                         {n}
                       </button>
@@ -1052,11 +983,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   <label className="text-xs text-gray-500 mb-1 block">参考图</label>
                   <button
                     onClick={() => setShowRefPopover(!showRefPopover)}
-                    className={`h-8 px-3 flex items-center gap-1.5 rounded-lg border transition-colors ${
-                      refImages.length > 0
-                        ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
-                        : 'bg-dark-bg border-dark-border text-gray-400 hover:text-white hover:border-gray-600'
-                    }`}
+                    className={getRefImageButtonStyles(refImages.length > 0)}
                   >
                     <ImageIcon className="w-3.5 h-3.5" />
                     <span className="text-xs">{refImages.length}/4</span>
@@ -1107,13 +1034,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               <button
                 onClick={isGenerating ? handleStop : handleGenerate}
                 disabled={!isGenerating && !canGenerate}
-                className={`w-full h-full min-h-[80px] rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
-                  !canGenerate && !isGenerating
-                    ? 'bg-dark-bg text-gray-500 cursor-not-allowed border border-dark-border'
-                    : isGenerating
-                      ? 'bg-red-500 hover:bg-red-400 text-black'
-                      : 'bg-banana-500 hover:bg-banana-400 text-black shadow-lg shadow-banana-500/20'
-                }`}
+                className={getGenerateButtonStyles(canGenerate, isGenerating)}
               >
                 {isGenerating ? (
                   <>

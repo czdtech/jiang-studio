@@ -92,11 +92,17 @@ export interface ChatMessage {
   image?: string;
 }
 
-/** Prompt 优化器配置（独立于各页面供应商） */
+/** Prompt 优化器配置（MCP 模式） */
 export interface PromptOptimizerConfig {
-  enabled: boolean; // 是否启用独立配置（false 时使用页面自带供应商）
-  apiKey: string;
-  baseUrl: string;
-  model: string;
+  enabled: boolean; // 是否启用优化器
+  mode: 'manual' | 'auto'; // 手动模式：点优化按钮触发；自动模式：点生成时自动优化
   updatedAt: number;
+}
+
+/** 迭代助手消息 */
+export interface IterationMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
 }

@@ -1,12 +1,23 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plug, RefreshCw, Wand2, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon } from 'lucide-react';
+import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon } from 'lucide-react';
 import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
-import { generateImages, KieSettings, optimizePrompt as optimizePromptKie } from '../services/kie';
-import { optimizePrompt as optimizePromptOpenAI } from '../services/openai';
+import { generateImages, KieSettings } from '../services/kie';
+import { optimizeUserPrompt } from '../services/mcp';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
+import { IterationAssistant } from './IterationAssistant';
 import { SamplePromptChips } from './SamplePromptChips';
+import {
+  getGenerateButtonStyles,
+  getCountButtonStyles,
+  getFavoriteButtonStyles,
+  getRefImageButtonStyles,
+  inputBaseStyles,
+  textareaBaseStyles,
+  selectBaseStyles,
+  selectSmallStyles,
+} from './uiStyles';
 import {
   deleteProvider as deleteProviderFromDb,
   getActiveProviderId as getActiveProviderIdFromDb,
@@ -54,6 +65,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const hydratedProviderIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const generationRunIdRef = useRef(0);
+  const generateLockRef = useRef(false);
   const isMountedRef = useRef(false);
 
   useEffect(() => {
@@ -113,7 +125,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
   const [customModel, setCustomModel] = useState('nano-banana-pro');
-  const [optimizerModel, setOptimizerModel] = useState<string>('gpt-4o-mini'); // 自定义优化模型
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
@@ -293,66 +304,22 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
 
   const handleOptimizePrompt = async () => {
     if (!prompt.trim()) return;
-
-    // 优先使用独立配置
-    if (optimizerConfig?.enabled) {
-      if (!optimizerConfig.apiKey) {
-        showToast('请先在优化器设置中填写 API Key', 'error');
-        return;
-      }
-      if (!optimizerConfig.baseUrl) {
-        showToast('请先在优化器设置中填写 Base URL', 'error');
-        return;
-      }
-      if (!optimizerConfig.model.trim()) {
-        showToast('请先在优化器设置中填写模型名', 'error');
-        return;
-      }
-
-      setIsOptimizing(true);
-      try {
-        const newPrompt = await optimizePromptOpenAI(
-          prompt,
-          { apiKey: optimizerConfig.apiKey, baseUrl: optimizerConfig.baseUrl },
-          optimizerConfig.model
-        );
-        setPrompt(newPrompt);
-        showToast('提示词已增强', 'success');
-      } catch (err) {
-        showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
-      } finally {
-        setIsOptimizing(false);
-      }
-      return;
-    }
-
-    // 回退到页面自带配置
-    if (!optimizerModel.trim()) {
-      showToast('请先设置提示词优化模型', 'error');
-      return;
-    }
-    if (!settings.apiKey) {
-      showToast('请先填写 API Key', 'error');
-      return;
-    }
-    if (!settings.baseUrl) {
-      showToast('请先填写 Base URL', 'error');
-      return;
-    }
+    if (!optimizerConfig?.enabled) return;
 
     setIsOptimizing(true);
     try {
-      const newPrompt = await optimizePromptKie(prompt, settings, optimizerModel);
+      const newPrompt = await optimizeUserPrompt(prompt);
       setPrompt(newPrompt);
-      showToast('提示词已增强', 'success');
+      showToast('提示词已优化', 'success');
     } catch (err) {
-      showToast('提示词增强失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
+      showToast('提示词优化失败：' + (err instanceof Error ? err.message : '未知错误'), 'error');
     } finally {
       setIsOptimizing(false);
     }
   };
 
   const handleGenerate = async () => {
+    if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
     if (!settings.apiKey) {
@@ -373,11 +340,33 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     abortControllerRef.current = controller;
     const runId = ++generationRunIdRef.current;
 
+    generateLockRef.current = true;
     setIsGenerating(true);
+
+    // 自动模式：先优化提示词
+    let finalPrompt = prompt;
+    if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
+      try {
+        finalPrompt = await optimizeUserPrompt(prompt);
+        setPrompt(finalPrompt);
+        showToast('提示词已自动优化', 'info');
+      } catch (err) {
+        // 优化失败，询问是否继续
+        const shouldContinue = window.confirm(
+          `提示词优化失败：${err instanceof Error ? err.message : '未知错误'}\n\n是否使用原始提示词继续生成？`
+        );
+        if (!shouldContinue) {
+          generateLockRef.current = false;
+          setIsGenerating(false);
+          return;
+        }
+      }
+    }
+
     try {
       const currentParams: GenerationParams = {
         ...params,
-        prompt,
+        prompt: finalPrompt,
         referenceImages: refImages,
         model: model as ModelType,
       };
@@ -438,6 +427,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
       }
       showToast('生成错误：' + (e instanceof Error ? e.message : '未知错误'), 'error');
     } finally {
+      if (generationRunIdRef.current === runId) generateLockRef.current = false;
       if (!isMountedRef.current) return;
       if (generationRunIdRef.current !== runId) return;
       setIsGenerating(false);
@@ -515,7 +505,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             <select
               value={activeProviderId}
               onChange={(e) => void handleSelectProvider(e.target.value)}
-              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer"
+              className={selectBaseStyles}
             >
               {providers.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -536,11 +526,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               <button
                 type="button"
                 onClick={handleToggleFavorite}
-                className={`h-8 w-8 flex items-center justify-center rounded-lg border transition-colors ${
-                  providerFavorite
-                    ? 'border-banana-500/70 bg-banana-500/10 text-banana-400'
-                    : 'border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600'
-                }`}
+                className={getFavoriteButtonStyles(providerFavorite)}
                 title="收藏"
                 aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
               >
@@ -566,7 +552,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               value={settings.apiKey}
               onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder="API Key"
-              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+              className={inputBaseStyles}
             />
             {!settings.apiKey.trim() && (
               <p className="text-xs text-yellow-500/80">未填写 API Key，生成/增强将不可用。</p>
@@ -581,7 +567,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               value={settings.baseUrl}
               onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
               placeholder="https://api.kie.ai"
-              className="w-full h-9 text-sm bg-dark-bg border border-dark-border rounded-lg px-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+              className={inputBaseStyles}
             />
             {!settings.baseUrl.trim() && (
               <p className="text-xs text-yellow-500/80">未填写 Base URL，生成/增强将不可用。</p>
@@ -589,10 +575,15 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           </div>
 
           {/* Prompt 优化器配置（内联） */}
-          <PromptOptimizerSettings onConfigChange={handleOptimizerConfigChange} />
+          <PromptOptimizerSettings
+            onConfigChange={handleOptimizerConfigChange}
+            currentPrompt={prompt}
+            onOptimize={handleOptimizePrompt}
+            isOptimizing={isOptimizing}
+          />
         </div>
 
-        {/* 右侧：图片展示 */}
+        {/* 中间：图片展示 */}
         <div className="flex-1 min-w-0 overflow-auto">
           <ImageGrid
             images={generatedImages}
@@ -603,6 +594,12 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             onEdit={onEdit}
           />
         </div>
+
+        {/* 右侧：迭代助手 */}
+        <IterationAssistant
+          currentPrompt={prompt}
+          onUseVersion={setPrompt}
+        />
       </div>
 
       {/* 下区：Prompt + 参数 + 生成（全宽） */}
@@ -612,32 +609,13 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             {/* Prompt */}
             <div className="flex-1 min-w-0 flex flex-col">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-xs text-gray-500">提示词</span>
-                <div className="flex items-center gap-2">
-                  {!optimizerConfig?.enabled && (
-                    <input
-                      type="text"
-                      value={optimizerModel}
-                      onChange={(e) => setOptimizerModel(e.target.value)}
-                      placeholder="优化模型（如 gpt-4o-mini）"
-                      className="w-44 h-6 text-xs bg-dark-bg border border-dark-border rounded px-2 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
-                    />
-                  )}
-                  <button
-                    onClick={handleOptimizePrompt}
-                    disabled={isOptimizing || !prompt || (!optimizerConfig?.enabled && !optimizerModel.trim())}
-                    className="flex items-center gap-1 text-xs text-banana-500 hover:text-banana-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Wand2 className="w-3 h-3" />
-                    {isOptimizing ? '优化中…' : '增强'}
-                  </button>
-                </div>
+                <span className="text-sm text-gray-500">提示词</span>
               </div>
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 placeholder="描述你的想法…"
-                className="flex-1 min-h-[80px] resize-none text-sm bg-dark-bg border border-dark-border rounded-lg p-3 text-white placeholder-gray-600 outline-none focus:ring-1 focus:ring-banana-500"
+                className={textareaBaseStyles}
               />
               {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
             </div>
@@ -645,7 +623,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             {/* 参数区 */}
             <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2">
               {/* Model + Ratio + Size */}
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-[minmax(0,1fr)_76px_76px] gap-2">
                 <div>
                   <label className="text-xs text-gray-500 mb-1 block">模型</label>
                   <input
@@ -662,7 +640,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     <select
                       value={params.aspectRatio}
                       onChange={(e) => setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))}
-                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                      className={selectSmallStyles}
                     >
                       {aspectRatioOptions.map((opt) => (
                         <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -677,7 +655,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     <select
                       value={params.imageSize}
                       onChange={(e) => setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))}
-                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-6 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
+                      className={selectSmallStyles}
                     >
                       <option value="1K">1K</option>
                       <option value="2K">2K</option>
@@ -711,11 +689,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                       <button
                         key={n}
                         onClick={() => setParams((prev) => ({ ...prev, count: n }))}
-                        className={`h-8 text-xs rounded-lg border transition-colors ${
-                          params.count === n
-                            ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
-                            : 'bg-dark-bg border-dark-border text-gray-300 hover:bg-dark-border'
-                        }`}
+                        className={getCountButtonStyles(params.count === n)}
                       >
                         {n}
                       </button>
@@ -727,11 +701,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                   <label className="text-xs text-gray-500 mb-1 block">参考图</label>
                   <button
                     onClick={() => setShowRefPopover(!showRefPopover)}
-                    className={`h-8 px-3 flex items-center gap-1.5 rounded-lg border transition-colors ${
-                      refImages.length > 0
-                        ? 'bg-banana-500/10 border-banana-500/30 text-banana-400'
-                        : 'bg-dark-bg border-dark-border text-gray-400 hover:text-white hover:border-gray-600'
-                    }`}
+                    className={getRefImageButtonStyles(refImages.length > 0)}
                   >
                     <ImageIcon className="w-3.5 h-3.5" />
                     <span className="text-xs">{refImages.length}/8</span>
@@ -781,16 +751,8 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             <div className="w-full lg:w-[100px] lg:shrink-0 flex items-center">
               <button
                 onClick={isGenerating ? handleStop : handleGenerate}
-                disabled={
-                  !isGenerating && !canGenerate
-                }
-                className={`w-full h-full min-h-[80px] rounded-xl font-bold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
-                  !canGenerate && !isGenerating
-                    ? 'bg-dark-bg text-gray-500 cursor-not-allowed border border-dark-border'
-                    : isGenerating
-                      ? 'bg-red-500 hover:bg-red-400 text-black'
-                      : 'bg-banana-500 hover:bg-banana-400 text-black shadow-lg shadow-banana-500/20'
-                }`}
+                disabled={!isGenerating && !canGenerate}
+                className={getGenerateButtonStyles(canGenerate, isGenerating)}
               >
                 {isGenerating ? (
                   <>

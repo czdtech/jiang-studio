@@ -97,10 +97,8 @@ export const setPromptOptimizerConfig = async (config: PromptOptimizerConfig): P
 };
 
 export const createDefaultPromptOptimizerConfig = (): PromptOptimizerConfig => ({
-  enabled: false,
-  apiKey: '',
-  baseUrl: 'https://api.openai.com',
-  model: 'gpt-4o-mini',
+  enabled: true,
+  mode: 'manual',
   updatedAt: Date.now(),
 });
 
