@@ -24,3 +24,7 @@ test-results
 *.njsproj
 *.sln
 *.sw?
+
+# AI assistant / agent artifacts
+.claude/
+.serena/
