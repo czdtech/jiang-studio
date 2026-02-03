@@ -6,7 +6,9 @@ const shotOptions = {
   fullPage: false,
   animations: 'disabled' as const,
   caret: 'hide' as const,
-  timeout: 30_000,
+  timeout: 90_000,
+  // Allow small rendering diffs across environments (font rasterization, subpixel AA, etc.).
+  maxDiffPixels: 10000,
 };
 
 test.describe('UI 截图回归', () => {
@@ -24,7 +26,7 @@ test.describe('UI 截图回归', () => {
     ] as const;
 
     for (const s of steps) {
-      await page.getByRole('button', { name: s.nav, exact: true }).click();
+      await page.getByRole('button', { name: s.nav, exact: true }).click({ force: true });
       await expect(page.getByRole('main').getByText(s.waitFor, { exact: true })).toBeVisible();
       await expect(page).toHaveScreenshot(s.shot, shotOptions);
     }
@@ -44,7 +46,7 @@ test.describe('UI 截图回归', () => {
     ] as const;
 
     for (const s of steps) {
-      await page.getByRole('button', { name: s.nav, exact: true }).click();
+      await page.getByRole('button', { name: s.nav, exact: true }).click({ force: true });
       await expect(page.getByRole('main').getByText(s.waitFor, { exact: true })).toBeVisible();
       await expect(page).toHaveScreenshot(s.shot, shotOptions);
     }

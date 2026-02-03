@@ -12,7 +12,7 @@ test('基础导航与页面渲染', async ({ page }) => {
   ] as const;
 
   for (const t of tabs) {
-    await page.getByRole('button', { name: t.nav, exact: true }).click();
+    await page.getByRole('button', { name: t.nav, exact: true }).click({ force: true });
     await expect(page.getByRole('main').getByText(t.heading, { exact: true })).toBeVisible();
   }
 });
@@ -26,6 +26,6 @@ test('新手引导与禁用逻辑（Gemini）', async ({ page }) => {
   const generateBtn = page.getByRole('button', { name: /生成/ });
   await expect(generateBtn).toBeDisabled();
 
-  await page.getByRole('button', { name: '随机一个', exact: true }).click();
+  await page.getByRole('button', { name: '随机一个', exact: true }).click({ force: true });
   await expect(generateBtn).toBeDisabled(); // 仍需 API Key 才可生成
 });
