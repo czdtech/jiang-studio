@@ -1,26 +1,40 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, Send, Check } from 'lucide-react';
+import { MessageCircle, Send, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { IterationMessage } from '../types';
 import { iteratePrompt } from '../services/mcp';
+
+/** 迭代模板选项 */
+const ITERATE_TEMPLATES = [
+  { value: 'image-iterate-general', label: '图像迭代', desc: '基于上一次优化结果进行小步可控的图像提示词迭代' },
+];
 
 interface IterationAssistantProps {
   /** 当前主提示词 */
   currentPrompt: string;
   /** 用户选择使用某个版本时的回调 */
   onUseVersion: (prompt: string) => void;
+  /** 迭代模板 ID */
+  iterateTemplateId?: string;
+  /** 模板变更回调 */
+  onTemplateChange?: (templateId: string) => void;
 }
 
 export const IterationAssistant = ({
   currentPrompt,
   onUseVersion,
+  iterateTemplateId = 'image-iterate-general',
+  onTemplateChange,
 }: IterationAssistantProps) => {
   const [messages, setMessages] = useState<IterationMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [width, setWidth] = useState(320);
   const [isResizing, setIsResizing] = useState(false);
+  const [showTemplateSelect, setShowTemplateSelect] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const currentTemplate = ITERATE_TEMPLATES.find(t => t.value === iterateTemplateId) || ITERATE_TEMPLATES[0];
 
   // 自动滚动到底部
   useEffect(() => {
@@ -33,14 +47,30 @@ export const IterationAssistant = ({
     setIsResizing(true);
   };
 
+  const handleTouchStart = (e: React.TouchEvent) => {
+    e.preventDefault();
+    setIsResizing(true);
+  };
+
   useEffect(() => {
     if (!isResizing) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    const updateWidth = (clientX: number) => {
       if (!containerRef.current) return;
       const containerRect = containerRef.current.getBoundingClientRect();
-      const newWidth = containerRect.right - e.clientX;
+      const newWidth = containerRect.right - clientX;
       setWidth(Math.max(280, Math.min(600, newWidth)));
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      updateWidth(e.clientX);
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      const t = e.touches?.[0];
+      if (!t) return;
+      updateWidth(t.clientX);
+      e.preventDefault();
     };
 
     const handleMouseUp = () => {
@@ -49,10 +79,16 @@ export const IterationAssistant = ({
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleMouseUp);
+    document.addEventListener('touchcancel', handleMouseUp);
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleMouseUp);
+      document.removeEventListener('touchcancel', handleMouseUp);
     };
   }, [isResizing]);
 
@@ -76,7 +112,7 @@ export const IterationAssistant = ({
         ? messages.filter((m) => m.role === 'assistant').pop()?.content || currentPrompt
         : currentPrompt;
 
-      const result = await iteratePrompt(basePrompt, userMessage.content);
+      const result = await iteratePrompt(basePrompt, userMessage.content, iterateTemplateId);
 
       const assistantMessage: IterationMessage = {
         id: crypto.randomUUID(),
@@ -115,6 +151,8 @@ export const IterationAssistant = ({
       {/* 拖拽手柄 */}
       <div
         onMouseDown={handleMouseDown}
+        onTouchStart={handleTouchStart}
+        style={{ touchAction: 'none' }}
         className={`absolute left-0 top-0 bottom-0 w-1 cursor-ew-resize hover:bg-banana-500/50 transition-colors ${
           isResizing ? 'bg-banana-500' : ''
         }`}
@@ -124,6 +162,46 @@ export const IterationAssistant = ({
       <div className="flex items-center gap-2 px-4 py-3 border-b border-dark-border">
         <MessageCircle className="w-4 h-4 text-banana-400" />
         <span className="text-sm font-medium text-gray-200">迭代助手</span>
+      </div>
+
+      {/* 模板选择区域 */}
+      <div className="border-b border-dark-border">
+        <button
+          type="button"
+          onClick={() => setShowTemplateSelect(!showTemplateSelect)}
+          className="w-full flex items-center justify-between px-4 py-2 text-xs text-gray-400 hover:text-gray-300 transition-colors"
+        >
+          <span>模板：{currentTemplate.label}</span>
+          {showTemplateSelect ? (
+            <ChevronUp className="w-3.5 h-3.5" />
+          ) : (
+            <ChevronDown className="w-3.5 h-3.5" />
+          )}
+        </button>
+        {showTemplateSelect && (
+          <div className="px-3 pb-3 space-y-1.5">
+            {ITERATE_TEMPLATES.map((t) => (
+              <button
+                key={t.value}
+                type="button"
+                onClick={() => {
+                  onTemplateChange?.(t.value);
+                  setShowTemplateSelect(false);
+                }}
+                className={`w-full text-left p-2 rounded border transition-colors ${
+                  iterateTemplateId === t.value
+                    ? 'bg-banana-500/20 border-banana-500'
+                    : 'bg-dark-bg border-dark-border hover:border-gray-500'
+                }`}
+              >
+                <div className={`text-xs font-medium ${iterateTemplateId === t.value ? 'text-banana-400' : 'text-gray-200'}`}>
+                  {t.label}
+                </div>
+                <div className="text-xs text-gray-500 mt-0.5">{t.desc}</div>
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 对话区域 */}

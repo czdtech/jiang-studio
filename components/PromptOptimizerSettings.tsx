@@ -4,6 +4,28 @@ import { PromptOptimizerConfig } from '../types';
 import { getPromptOptimizerConfig, setPromptOptimizerConfig, createDefaultPromptOptimizerConfig } from '../services/db';
 import { Tooltip } from './Tooltip';
 
+/** 优化模板选项（按分类） */
+const OPTIMIZE_TEMPLATE_GROUPS = [
+  {
+    label: '文生图',
+    templates: [
+      { value: 'image-general-optimize', label: '通用自然语言', desc: '围绕主体/动作/环境/光线/配色/材质/氛围进行层次化叙述' },
+      { value: 'image-chinese-optimize', label: '中文美学', desc: '中文语境与传统美学，融入意境、留白、水墨工笔等风格' },
+      { value: 'image-creative-text2image', label: '创意解构', desc: '深度解构原始文本，创造前所未见的奇幻视觉叙事' },
+      { value: 'image-photography-optimize', label: '摄影向', desc: '强调主体、构图、光线与氛围，适合摄影风格生成' },
+      { value: 'image-json-structured-optimize', label: 'JSON 结构化', desc: '输出严格 JSON 格式，结构通用可自由扩展' },
+    ],
+  },
+  {
+    label: '图生图',
+    templates: [
+      { value: 'image2image-general-optimize', label: '通用编辑', desc: '识别添加/删除/替换/增强意图，克制而自然的编辑指导' },
+      { value: 'image2image-design-text-edit-optimize', label: '设计文案替换', desc: '保持配色、字体、版式不变，仅替换文案内容' },
+      { value: 'image2image-json-structured-optimize', label: 'JSON 结构化', desc: '输出严格 JSON 格式，附带"保留/改变"指导' },
+    ],
+  },
+];
+
 interface PromptOptimizerSettingsProps {
   /** 配置变化时通知父组件 */
   onConfigChange?: (config: PromptOptimizerConfig | null) => void;
@@ -31,10 +53,12 @@ export const PromptOptimizerSettings = ({
       const saved = await getPromptOptimizerConfig();
       if (cancelled) return;
       if (saved) {
-        // 兼容旧配置：如果没有 mode 字段，添加默认值
+        // 兼容旧配置：如果没有某些字段，添加默认值
         const normalized = {
           ...saved,
           mode: saved.mode || 'manual',
+          templateId: saved.templateId || 'image-general-optimize',
+          iterateTemplateId: saved.iterateTemplateId || 'image-iterate-general',
         } as PromptOptimizerConfig;
         setConfig(normalized);
       } else {
@@ -126,6 +150,42 @@ export const PromptOptimizerSettings = ({
             </p>
           </div>
 
+          {/* 文生图模板 */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1.5">文生图模板</label>
+            <select
+              value={config.templateId}
+              onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
+              className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
+            >
+              {OPTIMIZE_TEMPLATE_GROUPS[0].templates.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            {(() => {
+              const current = OPTIMIZE_TEMPLATE_GROUPS[0].templates.find(t => t.value === config.templateId);
+              return current ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
+            })()}
+          </div>
+
+          {/* 图生图模板 */}
+          <div>
+            <label className="block text-xs text-gray-500 mb-1.5">图生图模板</label>
+            <select
+              value={config.templateId}
+              onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
+              className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
+            >
+              {OPTIMIZE_TEMPLATE_GROUPS[1].templates.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            {(() => {
+              const current = OPTIMIZE_TEMPLATE_GROUPS[1].templates.find(t => t.value === config.templateId);
+              return current ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
+            })()}
+          </div>
+
           {/* 手动模式下的优化按钮 */}
           {config.mode === 'manual' && (
             <button
@@ -163,6 +223,8 @@ export const usePromptOptimizerConfig = () => {
         const normalized = {
           ...saved,
           mode: saved.mode || 'manual',
+          templateId: saved.templateId || 'image-general-optimize',
+          iterateTemplateId: saved.iterateTemplateId || 'image-iterate-general',
         } as PromptOptimizerConfig;
         setConfig(normalized);
       }

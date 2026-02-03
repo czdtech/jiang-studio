@@ -23,6 +23,7 @@ import {
   getActiveProviderId as getActiveProviderIdFromDb,
   getDraft as getDraftFromDb,
   getPromptOptimizerConfig,
+  setPromptOptimizerConfig,
   getProviders as getProvidersFromDb,
   setActiveProviderId as setActiveProviderIdInDb,
   upsertDraft as upsertDraftInDb,
@@ -67,6 +68,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const generationRunIdRef = useRef(0);
   const generateLockRef = useRef(false);
   const isMountedRef = useRef(false);
+  const deletingProviderIdRef = useRef<string | null>(null); // 标记正在删除的供应商
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -149,6 +151,14 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const handleOptimizerConfigChange = useCallback((config: PromptOptimizerConfig | null) => {
     setOptimizerConfig(config);
   }, []);
+
+  const handleIterateTemplateChange = useCallback((templateId: string) => {
+    if (optimizerConfig) {
+      const newConfig = { ...optimizerConfig, iterateTemplateId: templateId, updatedAt: Date.now() };
+      setOptimizerConfig(newConfig);
+      void setPromptOptimizerConfig(newConfig);
+    }
+  }, [optimizerConfig]);
 
   // Params
   const [params, setParams] = useState<GenerationParams>({
@@ -233,6 +243,8 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     };
 
     const t = window.setTimeout(() => {
+      // 检查供应商是否正在被删除，避免竞态条件导致被删除的供应商被重新插入
+      if (deletingProviderIdRef.current === next.id) return;
       void upsertProviderInDb(next).catch((e) => console.warn('Failed to save provider:', e));
       setProviders((prev) => prev.map((p) => (p.id === next.id ? next : p)));
     }, 300);
@@ -293,11 +305,17 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
     if (!confirm(`删除供应商「${activeProvider.name}」？`)) return;
 
-    await deleteProviderFromDb(activeProvider.id);
-    const next = await getProvidersFromDb(scope);
-    setProviders(next);
-    const nextActive = next[0]?.id || '';
-    if (nextActive) await handleSelectProvider(nextActive);
+    // 标记正在删除，防止配置持久化的定时器重新插入被删除的供应商
+    deletingProviderIdRef.current = activeProvider.id;
+    try {
+      await deleteProviderFromDb(activeProvider.id);
+      const next = await getProvidersFromDb(scope);
+      setProviders(next);
+      const nextActive = next[0]?.id || '';
+      if (nextActive) await handleSelectProvider(nextActive);
+    } finally {
+      deletingProviderIdRef.current = null;
+    }
   };
 
   const handleToggleFavorite = () => setProviderFavorite((v) => !v);
@@ -308,7 +326,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
 
     setIsOptimizing(true);
     try {
-      const newPrompt = await optimizeUserPrompt(prompt);
+      const newPrompt = await optimizeUserPrompt(prompt, optimizerConfig?.templateId);
       setPrompt(newPrompt);
       showToast('提示词已优化', 'success');
     } catch (err) {
@@ -347,7 +365,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     let finalPrompt = prompt;
     if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
       try {
-        finalPrompt = await optimizeUserPrompt(prompt);
+        finalPrompt = await optimizeUserPrompt(prompt, optimizerConfig.templateId);
         setPrompt(finalPrompt);
         showToast('提示词已自动优化', 'info');
       } catch (err) {
@@ -599,6 +617,8 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
         <IterationAssistant
           currentPrompt={prompt}
           onUseVersion={setPrompt}
+          iterateTemplateId={optimizerConfig?.iterateTemplateId}
+          onTemplateChange={handleIterateTemplateChange}
         />
       </div>
 

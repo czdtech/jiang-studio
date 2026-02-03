@@ -10,13 +10,13 @@ export const SamplePromptChips: React.FC<SamplePromptChipsProps> = ({ onPick, ma
   const list = SAMPLE_PROMPTS.slice(0, Math.max(0, max));
 
   return (
-    <div className="mt-2 rounded-lg border border-dark-border bg-dark-bg/40 px-3 py-2">
+    <div className="mt-3 rounded-xl border border-dark-border bg-dark-bg/40 px-4 py-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-gray-500">示例提示词（点击填入）</span>
+        <span className="text-sm text-gray-500">示例提示词（点击填入）</span>
         <button
           type="button"
           onClick={() => onPick(pickRandomSamplePrompt().prompt)}
-          className="text-xs text-gray-400 hover:text-white transition-colors"
+          className="text-sm text-gray-400 hover:text-white transition-colors"
         >
           随机一个
         </button>
@@ -28,7 +28,7 @@ export const SamplePromptChips: React.FC<SamplePromptChipsProps> = ({ onPick, ma
             type="button"
             onClick={() => onPick(item.prompt)}
             title={item.prompt}
-            className="h-7 px-2.5 rounded-full border border-dark-border bg-dark-bg text-xs text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+            className="h-8 px-3 rounded-full border border-dark-border bg-dark-bg text-sm text-gray-300 hover:text-white hover:bg-white/5 hover:border-gray-500 transition-colors cursor-pointer"
           >
             {item.label}
           </button>
@@ -37,4 +37,3 @@ export const SamplePromptChips: React.FC<SamplePromptChipsProps> = ({ onPick, ma
     </div>
   );
 };
-

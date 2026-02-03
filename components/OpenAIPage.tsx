@@ -1,8 +1,21 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Plus, ChevronDown, X, Plug, Star, Trash2, Sparkles, Image as ImageIcon } from 'lucide-react';
-import { OpenAISettings, GeneratedImage, GenerationParams, ModelType, ProviderProfile, ProviderScope, ProviderDraft, PromptOptimizerConfig } from '../types';
+import {
+  OpenAISettings,
+  GeneratedImage,
+  GenerationParams,
+  ModelType,
+  ProviderProfile,
+  ProviderScope,
+  ProviderDraft,
+  PromptOptimizerConfig,
+  BatchTask,
+  BatchTaskStatus,
+  BatchConfig,
+} from '../types';
 import { generateImages } from '../services/openai';
 import { optimizeUserPrompt } from '../services/mcp';
+import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
@@ -23,6 +36,7 @@ import {
   getActiveProviderId as getActiveProviderIdFromDb,
   getDraft as getDraftFromDb,
   getPromptOptimizerConfig,
+  setPromptOptimizerConfig,
   getProviders as getProvidersFromDb,
   setActiveProviderId as setActiveProviderIdInDb,
   upsertDraft as upsertDraftInDb,
@@ -137,10 +151,13 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const isHydratingRef = useRef(false);
   const hydratedProviderIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const batchAbortControllerRef = useRef<AbortController | null>(null);
+  const batchAbortRef = useRef(false);
   const stopRequestedRef = useRef(false);
   const generationRunIdRef = useRef(0);
   const generateLockRef = useRef(false);
   const isMountedRef = useRef(false);
+  const deletingProviderIdRef = useRef<string | null>(null); // 标记正在删除的供应商
 
   useEffect(() => {
     // React StrictMode(dev) 会执行一次“mount->unmount->mount”来检测副作用；这里必须在 effect 中显式置 true。
@@ -149,6 +166,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       isMountedRef.current = false;
       try {
         abortControllerRef.current?.abort();
+        batchAbortControllerRef.current?.abort();
       } catch {
         // ignore
       }
@@ -237,6 +255,14 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     setOptimizerConfig(config);
   }, []);
 
+  const handleIterateTemplateChange = useCallback((templateId: string) => {
+    if (optimizerConfig) {
+      const newConfig = { ...optimizerConfig, iterateTemplateId: templateId, updatedAt: Date.now() };
+      setOptimizerConfig(newConfig);
+      void setPromptOptimizerConfig(newConfig);
+    }
+  }, [optimizerConfig]);
+
   // Antigravity Tools model list (optional UX)
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [availableImageModels, setAvailableImageModels] = useState<string[]>([]);
@@ -257,6 +283,11 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   // Results
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
+
+  // 批量任务状态
+  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
+  const [isBatchMode, setIsBatchMode] = useState(false);
+  const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
 
   const inferredAntigravityConfig = useMemo(() => {
     if (!isAntigravityTools) return null;
@@ -351,6 +382,8 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     };
 
     const t = window.setTimeout(() => {
+      // 检查供应商是否正在被删除，避免竞态条件导致被删除的供应商被重新插入
+      if (deletingProviderIdRef.current === next.id) return;
       void upsertProviderInDb(next).catch((e) => console.warn('Failed to save provider:', e));
       setProviders((prev) => prev.map((p) => (p.id === next.id ? next : p)));
     }, 300);
@@ -419,11 +452,17 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     }
     if (!confirm(`删除供应商「${activeProvider.name}」？`)) return;
 
-    await deleteProviderFromDb(activeProvider.id);
-    const next = await getProvidersFromDb(scope);
-    setProviders(next);
-    const nextActive = next[0]?.id || '';
-    if (nextActive) await handleSelectProvider(nextActive);
+    // 标记正在删除，防止配置持久化的定时器重新插入被删除的供应商
+    deletingProviderIdRef.current = activeProvider.id;
+    try {
+      await deleteProviderFromDb(activeProvider.id);
+      const next = await getProvidersFromDb(scope);
+      setProviders(next);
+      const nextActive = next[0]?.id || '';
+      if (nextActive) await handleSelectProvider(nextActive);
+    } finally {
+      deletingProviderIdRef.current = null;
+    }
   };
 
   const handleToggleFavorite = () => {
@@ -555,7 +594,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
     setIsOptimizing(true);
     try {
-      const newPrompt = await optimizeUserPrompt(prompt);
+      const newPrompt = await optimizeUserPrompt(prompt, optimizerConfig?.templateId);
       setPrompt(newPrompt);
       showToast('提示词已优化', 'success');
     } catch (err) {
@@ -569,6 +608,13 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
+
+    // 切回单条生成时，清理批量状态，避免 UI/slots 冲突
+    if (isBatchMode) {
+      setIsBatchMode(false);
+      setBatchTasks([]);
+    }
+
     const model = customModel;
     if (!model.trim()) {
       showToast('请先填写模型名', 'error');
@@ -595,7 +641,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     let finalPrompt = prompt;
     if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
       try {
-        finalPrompt = await optimizeUserPrompt(prompt);
+        finalPrompt = await optimizeUserPrompt(prompt, optimizerConfig.templateId);
         setPrompt(finalPrompt);
         showToast('提示词已自动优化', 'info');
       } catch (err) {
@@ -701,6 +747,269 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       abortControllerRef.current?.abort();
     } catch {
       // ignore
+    }
+  };
+
+  // 解析多行提示词为批量任务
+  const parsePromptsToBatch = (text: string): string[] => {
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  };
+
+  // 检测是否为批量模式（多行输入）
+  const promptLines = parsePromptsToBatch(prompt);
+  const detectedBatchMode = promptLines.length > 1;
+
+  const handleBatchGenerate = async () => {
+    if (generateLockRef.current) return;
+    if (isGenerating) return;
+
+    const prompts = parsePromptsToBatch(prompt);
+    if (prompts.length === 0) return;
+
+    const model = customModel;
+    if (!model.trim()) {
+      showToast('请先填写模型名', 'error');
+      return;
+    }
+    if (!settings.baseUrl?.trim()) {
+      showToast('请先填写 Base URL', 'error');
+      return;
+    }
+    if (requiresApiKey && !settings.apiKey?.trim()) {
+      showToast('请先填写 API Key', 'error');
+      return;
+    }
+
+    // 初始化批量任务
+    const tasks: BatchTask[] = prompts.map((p) => ({
+      id: crypto.randomUUID(),
+      prompt: p,
+      status: 'pending' as BatchTaskStatus,
+    }));
+
+    const controller = new AbortController();
+    batchAbortControllerRef.current = controller;
+    batchAbortRef.current = false;
+
+    setBatchTasks(tasks);
+    setIsBatchMode(true);
+    generateLockRef.current = true;
+    setIsGenerating(true);
+
+    // 批量模式用 images 渲染，不用 slots
+    setGeneratedImages([]);
+    setGeneratedSlots([]);
+
+    let successCount = 0;
+    const safeConcurrency = Math.max(1, Math.min(6, Math.floor(batchConfig.concurrency || 1)));
+    const safeCountPerPrompt = Math.max(1, Math.min(4, Math.floor(batchConfig.countPerPrompt || 1)));
+
+    const runTask = async (task: BatchTask) => {
+      if (batchAbortRef.current || controller.signal.aborted) return;
+
+      setBatchTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: 'running' as BatchTaskStatus, startedAt: Date.now() } : t
+        )
+      );
+
+      try {
+        // 自动优化提示词（如果启用）
+        let finalPrompt = task.prompt;
+        if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
+          try {
+            finalPrompt = await optimizeUserPrompt(task.prompt, optimizerConfig.templateId);
+          } catch {
+            // ignore
+          }
+        }
+
+        const currentParams: GenerationParams = {
+          ...params,
+          prompt: finalPrompt,
+          referenceImages: refImages,
+          count: safeCountPerPrompt,
+          model: model as ModelType,
+        };
+
+        const antigravityConfig = isAntigravityTools ? inferAntigravityImageConfigFromModelId(model) : null;
+        if (antigravityConfig?.aspectRatio) currentParams.aspectRatio = antigravityConfig.aspectRatio;
+        if (antigravityConfig?.imageSize) currentParams.imageSize = antigravityConfig.imageSize;
+
+        const outcomes = await generateImages(currentParams, settings, {
+          signal: controller.signal,
+          // Antigravity Tools 推荐通过“模型后缀 / size 参数”控制比例与分辨率；这里不再额外传 aspect_ratio/size，避免冲突。
+          imageConfig: isAntigravityTools ? {} : undefined,
+        });
+
+        const successImages = outcomes
+          .filter((o): o is Extract<typeof outcomes[number], { ok: true }> => o.ok === true)
+          .map((o) => ({
+            ...o.image,
+            sourceScope: scope,
+            sourceProviderId: activeProviderId,
+          }));
+
+        const failErrors = outcomes
+          .filter((o): o is Extract<typeof outcomes[number], { ok: false }> => o.ok === false)
+          .map((o) => o.error)
+          .filter((s) => typeof s === 'string' && s.length > 0);
+
+        // 保存图片（成功的那部分）
+        for (const img of successImages) {
+          if (batchAbortRef.current || controller.signal.aborted) break;
+          await saveImage(img);
+        }
+
+        // 更新任务状态
+        if (successImages.length > 0) {
+          setBatchTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id
+                ? {
+                    ...t,
+                    status: 'success' as BatchTaskStatus,
+                    images: successImages,
+                    error: failErrors.length > 0 ? `部分失败：${failErrors[0]}` : undefined,
+                    completedAt: Date.now(),
+                  }
+                : t
+            )
+          );
+          setGeneratedImages((prev) => [...prev, ...successImages]);
+          successCount++;
+          return;
+        }
+
+        const aborted =
+          controller.signal.aborted ||
+          batchAbortRef.current ||
+          (failErrors.length > 0 && failErrors.every((e) => e === '已停止'));
+
+        setBatchTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id
+              ? {
+                  ...t,
+                  status: 'error' as BatchTaskStatus,
+                  error: aborted ? '已取消' : (failErrors[0] || '生成失败'),
+                  completedAt: Date.now(),
+                }
+              : t
+          )
+        );
+      } catch (e) {
+        const aborted = (e as any)?.name === 'AbortError' || controller.signal.aborted;
+        if (aborted) {
+          setBatchTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id
+                ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: Date.now() }
+                : t
+            )
+          );
+          return;
+        }
+
+        setBatchTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id
+              ? {
+                  ...t,
+                  status: 'error' as BatchTaskStatus,
+                  error: e instanceof Error ? e.message : '生成失败',
+                  completedAt: Date.now(),
+                }
+              : t
+          )
+        );
+      }
+    };
+
+    const executeWithConcurrency = async () => {
+      const queue = [...tasks];
+      const running = new Set<Promise<void>>();
+
+      while (queue.length > 0 || running.size > 0) {
+        if (batchAbortRef.current || controller.signal.aborted) {
+          await Promise.allSettled(Array.from(running));
+          break;
+        }
+
+        while (running.size < safeConcurrency && queue.length > 0) {
+          const task = queue.shift()!;
+          let p: Promise<void>;
+          p = runTask(task).finally(() => running.delete(p));
+          running.add(p);
+        }
+
+        if (running.size > 0) {
+          await Promise.race(Array.from(running));
+        }
+      }
+    };
+
+    try {
+      await executeWithConcurrency();
+    } finally {
+      generateLockRef.current = false;
+      setIsGenerating(false);
+      batchAbortControllerRef.current = null;
+
+      if (batchAbortRef.current || controller.signal.aborted) {
+        const now = Date.now();
+        setBatchTasks((prev) =>
+          prev.map((t) =>
+            t.status === 'pending'
+              ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
+              : t
+          )
+        );
+        showToast('批量生成已停止', 'info');
+      } else {
+        showToast(`批量完成：${successCount}/${tasks.length} 成功`, successCount === tasks.length ? 'success' : 'info');
+      }
+    }
+  };
+
+  const handleBatchStop = () => {
+    if (!isGenerating) return;
+    batchAbortRef.current = true;
+    try {
+      batchAbortControllerRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    const now = Date.now();
+    setBatchTasks((prev) =>
+      prev.map((t) =>
+        t.status === 'pending'
+          ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
+          : t
+      )
+    );
+  };
+
+  const handleClearBatch = () => {
+    setBatchTasks([]);
+    setIsBatchMode(false);
+    setGeneratedImages([]);
+    setGeneratedSlots([]);
+  };
+
+  const handleBatchDownloadAll = async () => {
+    if (isGenerating) return;
+    const images = batchTasks.flatMap((t) => t.images || []);
+    if (images.length === 0) return;
+
+    try {
+      const n = await downloadImagesSequentially(images, { delayMs: 140 });
+      showToast(`已开始下载 ${n} 张`, 'success');
+    } catch (e) {
+      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
     }
   };
 
@@ -854,24 +1163,81 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
           />
         </div>
 
-        {/* 中间：图片展示 */}
-        <div className="flex-1 min-w-0 overflow-auto">
-          <ImageGrid
-            images={generatedImages}
-            slots={generatedSlots}
-            isGenerating={isGenerating}
-            params={params}
-            onImageClick={onImageClick}
-            onEdit={onEdit}
-          />
-        </div>
+	        {/* 中间：图片展示 */}
+	        <div className="flex-1 min-w-0 overflow-auto">
+	          {/* 批量模式进度条 */}
+	          {isBatchMode && batchTasks.length > 0 && (
+	            <div className="mb-4 p-3 bg-dark-surface border border-dark-border rounded-lg">
+	              <div className="flex items-center justify-between mb-2 gap-2">
+	                <span className="text-sm text-gray-300">
+	                  批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
+	                </span>
+	                <div className="flex items-center gap-2">
+	                  <div className="flex gap-2 text-xs">
+	                    <span className="text-green-400">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
+	                    <span className="text-red-400">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
+	                    <span className="text-gray-500">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
+	                  </div>
+	                  {isGenerating && (
+	                    <button
+	                      type="button"
+	                      onClick={handleBatchStop}
+	                      className="h-7 px-2 rounded-lg border border-red-500/40 bg-red-500/10 text-red-200 hover:bg-red-500/20 transition-colors text-xs"
+	                    >
+	                      取消
+	                    </button>
+	                  )}
+	                  {!isGenerating &&
+	                    batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
+	                    batchTasks.some(t => (t.images?.length || 0) > 0) && (
+	                      <button
+	                        type="button"
+	                        onClick={() => void handleBatchDownloadAll()}
+	                        className="h-7 px-2 rounded-lg border border-dark-border bg-dark-bg text-gray-300 hover:text-white hover:border-gray-600 transition-colors text-xs"
+	                      >
+	                        下载全部
+	                      </button>
+	                    )}
+	                </div>
+	              </div>
+	              <div className="flex gap-1 flex-wrap">
+	                {batchTasks.map((task, idx) => (
+	                  <div
+	                    key={task.id}
+	                    className={`w-6 h-6 rounded text-xs flex items-center justify-center ${
+	                      task.status === 'success' ? 'bg-green-500/20 text-green-400' :
+	                      task.status === 'error' ? 'bg-red-500/20 text-red-400' :
+	                      task.status === 'running' ? 'bg-banana-500/20 text-banana-400 animate-pulse' :
+	                      'bg-dark-border text-gray-500'
+	                    }`}
+	                    title={task.prompt}
+	                  >
+	                    {idx + 1}
+	                  </div>
+	                ))}
+	              </div>
+	            </div>
+	          )}
+	          <ImageGrid
+	            images={generatedImages}
+	            slots={isBatchMode ? undefined : generatedSlots}
+	            isGenerating={isGenerating}
+	            params={params}
+	            onImageClick={onImageClick}
+	            onEdit={onEdit}
+	          />
+	        </div>
 
-        {/* 右侧：迭代助手 */}
-        <IterationAssistant
-          currentPrompt={prompt}
-          onUseVersion={setPrompt}
-        />
-      </div>
+	        {/* 右侧：迭代助手 */}
+	        <div className="hidden md:block">
+	          <IterationAssistant
+	            currentPrompt={prompt}
+	            onUseVersion={setPrompt}
+	            iterateTemplateId={optimizerConfig?.iterateTemplateId}
+	            onTemplateChange={handleIterateTemplateChange}
+	          />
+	        </div>
+	      </div>
 
       {/* 下区：Prompt + 参数 + 生成（全宽） */}
       <div className="shrink-0 px-4 pb-4">
@@ -962,21 +1328,71 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                 )}
               </div>
 
-              {/* Count + 参考图 */}
-              <div className="flex items-center gap-2">
+              {/* Count / 批量配置 + 参考图 */}
+              <div className="flex items-end gap-2">
                 <div className="flex-1">
-                  <label className="text-xs text-gray-500 mb-1 block">数量</label>
-                  <div className="grid grid-cols-4 gap-1">
-                    {[1, 2, 3, 4].map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => setParams({ ...params, count: n })}
-                        className={getCountButtonStyles(params.count === n)}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
+                  {detectedBatchMode ? (
+                    <div className="space-y-1.5">
+                      <label className="text-xs text-gray-500 block">批量配置</label>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <div>
+                          <label className="text-[10px] text-gray-600 mb-1 block">并发</label>
+                          <div className="relative">
+                            <select
+                              value={batchConfig.concurrency}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isFinite(v)) return;
+                                setBatchConfig((prev) => ({ ...prev, concurrency: v }));
+                              }}
+                              className={selectSmallStyles}
+                              disabled={isGenerating}
+                            >
+                              {[1, 2, 3, 4, 5, 6].map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
+                            </select>
+                            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-gray-600 mb-1 block">每提示词</label>
+                          <div className="relative">
+                            <select
+                              value={batchConfig.countPerPrompt}
+                              onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isFinite(v)) return;
+                                setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
+                              }}
+                              className={selectSmallStyles}
+                              disabled={isGenerating}
+                            >
+                              {[1, 2, 3, 4].map((n) => (
+                                <option key={n} value={n}>{n}</option>
+                              ))}
+                            </select>
+                            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <label className="text-xs text-gray-500 mb-1 block">数量</label>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[1, 2, 3, 4].map((n) => (
+                          <button
+                            key={n}
+                            onClick={() => setParams({ ...params, count: n })}
+                            className={getCountButtonStyles(params.count === n)}
+                          >
+                            {n}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
                 {/* 参考图按钮 */}
                 <div className="relative">
@@ -1030,9 +1446,14 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             </div>
 
             {/* 生成按钮 */}
-            <div className="w-full lg:w-[100px] lg:shrink-0 flex items-center">
+            <div className="w-full lg:w-[140px] lg:shrink-0 flex flex-col gap-1">
+              {detectedBatchMode && (
+                <span className="text-xs text-banana-400 text-center">
+                  批量模式：{promptLines.length} 个任务
+                </span>
+              )}
               <button
-                onClick={isGenerating ? handleStop : handleGenerate}
+                onClick={isGenerating ? (detectedBatchMode ? handleBatchStop : handleStop) : (detectedBatchMode ? handleBatchGenerate : handleGenerate)}
                 disabled={!isGenerating && !canGenerate}
                 className={getGenerateButtonStyles(canGenerate, isGenerating)}
               >
@@ -1040,6 +1461,11 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   <>
                     <RefreshCw className="w-5 h-5 animate-spin" />
                     <span className="text-xs">停止</span>
+                  </>
+                ) : detectedBatchMode ? (
+                  <>
+                    <Sparkles className="w-5 h-5" />
+                    <span className="text-sm">批量生成</span>
                   </>
                 ) : (
                   <>
@@ -1049,6 +1475,14 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   </>
                 )}
               </button>
+              {isBatchMode && batchTasks.length > 0 && !isGenerating && (
+                <button
+                  onClick={handleClearBatch}
+                  className="h-6 text-xs text-gray-400 hover:text-white transition-colors"
+                >
+                  清除队列
+                </button>
+              )}
             </div>
           </div>
         </div>

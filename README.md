@@ -21,6 +21,15 @@ View your app in AI Studio: https://ai.studio/apps/drive/1Mxb1zZ_YaSzpJDMtEjEXYM
 3. Run the app:
    `npm run dev`
 
+## Dev Proxy (optional)
+
+- Antigravity Tools 默认使用同源路径 `/antigravity`（避免 Mixed Content / CORS）
+  - 默认代理目标：`http://127.0.0.1:8045`
+  - 可用环境变量覆盖：`ANTIGRAVITY_PROXY_TARGET`
+- 可选 OpenAI 同源代理路径 `/openai`（仅 dev 代理）
+  - 默认代理目标：`https://api.openai.com`
+  - 可用环境变量覆盖：`OPENAI_PROXY_TARGET`
+
 ## E2E (Playwright)
 
 - Run smoke + UI screenshot regression:

@@ -19,7 +19,9 @@ export default defineConfig({
     browserName: 'chromium',
     locale: 'zh-CN',
     colorScheme: 'dark',
-    reducedMotion: 'reduce',
+    contextOptions: {
+      reducedMotion: 'reduce',
+    },
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

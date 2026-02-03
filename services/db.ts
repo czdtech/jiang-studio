@@ -99,6 +99,8 @@ export const setPromptOptimizerConfig = async (config: PromptOptimizerConfig): P
 export const createDefaultPromptOptimizerConfig = (): PromptOptimizerConfig => ({
   enabled: true,
   mode: 'manual',
+  templateId: 'image-general-optimize',
+  iterateTemplateId: 'image-iterate-general',
   updatedAt: Date.now(),
 });
 

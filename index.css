@@ -3,7 +3,7 @@
 /* Professional Font Pairing: Poppins (headings) + Inter (body) */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
 
-/* Custom Theme */
+/* Custom Theme - Enhanced Contrast for Daytime Visibility */
 @theme {
   --color-banana-50: #fffaeb;
   --color-banana-100: #fff3c7;
@@ -15,15 +15,18 @@
   --color-banana-700: #b45309;
   --color-banana-800: #92400e;
   --color-banana-900: #78350f;
-  
-  --color-dark-bg: #0f0f11;
-  --color-dark-surface: #18181b;
-  --color-dark-border: #27272a;
+
+  /* Enhanced dark theme - improved contrast for daylight visibility */
+  --color-dark-bg: #09090b;           /* Deeper background for better layering */
+  --color-dark-surface: #1c1c20;      /* Brighter surface for clear separation */
+  --color-dark-border: #3f3f46;       /* Much brighter border - visible in daylight */
+  --color-dark-border-subtle: #27272a; /* Subtle border for less prominent elements */
+  --color-dark-border-strong: #52525b; /* Strong border for emphasis/hover states */
 }
 
 body {
   background-color: var(--color-dark-bg);
-  color: #e4e4e7;
+  color: #f4f4f5;  /* Brighter text for better readability */
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
@@ -60,12 +63,12 @@ a:focus-visible,
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #3f3f46;
+  background: #52525b;  /* Brighter scrollbar for visibility */
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #52525b;
+  background: #71717a;  /* Even brighter on hover */
 }
 
 /* Toast Animation */

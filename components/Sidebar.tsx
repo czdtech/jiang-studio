@@ -26,7 +26,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
   return (
     <>
       {/* 桌面端顶部导航 */}
-      <header className="hidden md:flex fixed top-0 left-0 right-0 h-12 bg-[#121212] border-b border-[#2a2a2a] z-50 items-center justify-center">
+      <header className="hidden md:flex fixed top-0 left-0 right-0 h-12 bg-dark-surface border-b border-dark-border z-50 items-center justify-center">
         <div className="w-full max-w-7xl mx-auto px-4 flex items-center gap-6">
           {/* Logo */}
           <div className="flex items-center gap-2 shrink-0">
@@ -59,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
       </header>
 
       {/* 移动端底部导航 */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[#121212] border-t border-[#2a2a2a] z-50">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-dark-surface border-t border-dark-border z-50">
         <div className="flex items-center justify-around h-full px-1">
           {NAV_ITEMS.map((item) => {
             const isActive = activeTab === item.id;

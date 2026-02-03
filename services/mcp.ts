@@ -9,7 +9,16 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-const MCP_URL = 'http://localhost:8081/mcp';
+function getMcpUrl(): URL {
+  // In the browser, call same-origin and let Vite proxy `/mcp` to the VM's prompt-optimizer.
+  // This avoids `localhost` pointing to the user's own machine (e.g. Windows) instead of the VM.
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return new URL('/mcp', window.location.origin);
+  }
+
+  // Non-browser fallback (e.g. running this module in Node).
+  return new URL('http://127.0.0.1:28081/mcp');
+}
 
 let mcpClient: Client | null = null;
 
@@ -21,7 +30,7 @@ async function getClient(): Promise<Client> {
     return mcpClient;
   }
 
-  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+  const transport = new StreamableHTTPClientTransport(getMcpUrl());
   const client = new Client({
     name: 'nano-banana-studio',
     version: '1.0.0',
@@ -58,10 +67,15 @@ async function callTool(toolName: string, args: Record<string, unknown>): Promis
  * 优化用户提示词（生图前使用）
  *
  * @param prompt 原始用户提示词
+ * @param templateId 可选的模板 ID
  * @returns 优化后的提示词
  */
-export async function optimizeUserPrompt(prompt: string): Promise<string> {
-  return callTool('optimize-user-prompt', { prompt });
+export async function optimizeUserPrompt(prompt: string, templateId?: string): Promise<string> {
+  const args: Record<string, unknown> = { prompt };
+  if (templateId) {
+    args.template = templateId;
+  }
+  return callTool('optimize-user-prompt', args);
 }
 
 /**
@@ -71,8 +85,12 @@ export async function optimizeUserPrompt(prompt: string): Promise<string> {
  * @param requirement 用户的修改需求
  * @returns 优化后的提示词
  */
-export async function iteratePrompt(prompt: string, requirement: string): Promise<string> {
-  return callTool('iterate-prompt', { prompt, requirement });
+export async function iteratePrompt(prompt: string, requirement: string, templateId?: string): Promise<string> {
+  const args: Record<string, unknown> = { prompt, requirements: requirement };
+  if (templateId) {
+    args.template = templateId;
+  }
+  return callTool('iterate-prompt', args);
 }
 
 /**

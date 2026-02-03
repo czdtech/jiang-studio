@@ -96,6 +96,8 @@ export interface ChatMessage {
 export interface PromptOptimizerConfig {
   enabled: boolean; // 是否启用优化器
   mode: 'manual' | 'auto'; // 手动模式：点优化按钮触发；自动模式：点生成时自动优化
+  templateId: string; // 优化器模板 ID
+  iterateTemplateId: string; // 迭代助手模板 ID
   updatedAt: number;
 }
 
@@ -105,4 +107,24 @@ export interface IterationMessage {
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+}
+
+/** 批量任务状态 */
+export type BatchTaskStatus = 'pending' | 'running' | 'success' | 'error';
+
+/** 批量任务项 */
+export interface BatchTask {
+  id: string;
+  prompt: string;
+  status: BatchTaskStatus;
+  images?: GeneratedImage[];
+  error?: string;
+  startedAt?: number;
+  completedAt?: number;
+}
+
+/** 批量生成配置 */
+export interface BatchConfig {
+  concurrency: number; // 并发数，默认 2
+  countPerPrompt: number; // 每个提示词生成几张，默认 1
 }
