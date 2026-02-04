@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, Edit, Download, Image, AlertTriangle } from 'lucide-react';
 import { GeneratedImage, GenerationParams } from '../types';
 
@@ -12,35 +12,108 @@ interface ImageGridProps {
   slots?: ImageGridSlot[];
   isGenerating: boolean;
   params: GenerationParams;
+  expectedCount?: number;
   onImageClick: (images: GeneratedImage[], index: number) => void;
   onEdit: (image: GeneratedImage) => void;
 }
+
+const MIN_CARD_SIZE = 72;
+const GRID_GAP = 16;
 
 export const ImageGrid = ({
   images,
   slots,
   isGenerating,
   params,
+  expectedCount,
   onImageClick,
   onEdit
 }: ImageGridProps) => {
   const hasSlots = !!slots && slots.length > 0;
+  const showEmptyState = !hasSlots && images.length === 0 && !isGenerating;
+  const totalCards = hasSlots ? slots.length : (isGenerating ? (expectedCount ?? params.count) : images.length);
+  const displayCards = Math.max(totalCards, 1);
+  const remainingCards = Math.max(totalCards - images.length, 0);
 
-  if (!hasSlots && images.length === 0 && !isGenerating) {
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [gridLayout, setGridLayout] = useState<{ cols: number; size: number }>({
+    cols: 1,
+    size: MIN_CARD_SIZE,
+  });
+
+  const computeLayout = useCallback((width: number, height: number, count: number) => {
+    const safeCount = Math.max(1, count);
+    const safeWidth = Math.max(0, width);
+    const safeHeight = Math.max(0, height);
+    let bestCols = 1;
+    let bestSize = 0;
+
+    for (let cols = 1; cols <= safeCount; cols++) {
+      const rows = Math.ceil(safeCount / cols);
+      const maxWidth = (safeWidth - GRID_GAP * (cols - 1)) / cols;
+      const maxHeight = (safeHeight - GRID_GAP * (rows - 1)) / rows;
+      const size = Math.min(maxWidth, maxHeight);
+      if (size > bestSize) {
+        bestSize = size;
+        bestCols = cols;
+      }
+    }
+
+    const nextSize = Number.isFinite(bestSize) && bestSize > 0 ? Math.floor(bestSize) : MIN_CARD_SIZE;
+    return {
+      cols: bestCols,
+      size: Math.max(1, nextSize),
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (showEmptyState) return;
+    const el = gridRef.current;
+    if (!el) return;
+
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect();
+        setGridLayout(computeLayout(rect.width, rect.height, displayCards));
+      });
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => {
+      cancelAnimationFrame(frame);
+      ro.disconnect();
+    };
+  }, [computeLayout, displayCards, showEmptyState]);
+
+  const gridStyle = useMemo<React.CSSProperties>(() => ({
+    gridTemplateColumns: `repeat(${gridLayout.cols}, ${gridLayout.size}px)`,
+    gridAutoRows: `${gridLayout.size}px`,
+    gap: `${GRID_GAP}px`,
+    justifyContent: 'center',
+    alignContent: 'center',
+  }), [gridLayout]);
+
+  const renderGrid = (children: React.ReactNode) => (
+    <div ref={gridRef} className="flex-1 min-h-0 w-full">
+      <div className="grid w-full h-full" style={gridStyle}>
+        {children}
+      </div>
+    </div>
+  );
+
+  if (showEmptyState) {
     return (
-      <div className="h-full min-h-[500px] flex flex-col items-center justify-center text-gray-500 bg-dark-surface/30 rounded-2xl border-2 border-dashed border-dark-border">
+      <div className="flex-1 h-full min-h-0 flex flex-col items-center justify-center text-gray-500 bg-dark-surface/30 rounded-2xl border-2 border-dashed border-dark-border">
         <Image className="w-16 h-16 mb-4 opacity-20" />
         <p className="text-sm text-gray-400">生成结果会显示在这里</p>
         <p className="mt-2 text-xs text-gray-600">在下方输入提示词后点击“生成”开始</p>
       </div>
     );
   }
-
-  const totalCards = hasSlots ? slots.length : (isGenerating ? params.count : images.length);
-
-  const gridCols = totalCards > 4
-    ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4'
-    : 'grid-cols-1 md:grid-cols-2';
 
   if (hasSlots) {
     const successImages = slots
@@ -49,14 +122,14 @@ export const ImageGrid = ({
 
     let successIndex = -1;
 
-    return (
-      <div className={`grid gap-4 ${gridCols}`}>
+    return renderGrid(
+      <>
         {slots.map((slot) => {
           if (slot.status === 'pending') {
             return (
               <div
                 key={slot.id}
-                className="aspect-square bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center"
+                className="w-full h-full bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center"
               >
                 <Sparkles className="text-banana-500/30 w-12 h-12 animate-pulse" />
               </div>
@@ -67,7 +140,7 @@ export const ImageGrid = ({
             return (
               <div
                 key={slot.id}
-                className="aspect-square bg-dark-surface/30 rounded-xl border border-red-500/40 flex flex-col items-center justify-center p-4 text-center"
+                className="w-full h-full bg-dark-surface/30 rounded-xl border border-red-500/40 flex flex-col items-center justify-center p-4 text-center"
               >
                 <AlertTriangle className="w-10 h-10 text-red-400/80 mb-3" />
                 <p className="text-sm font-semibold text-red-200">生成失败</p>
@@ -88,7 +161,7 @@ export const ImageGrid = ({
               key={slot.id}
               role="button"
               tabIndex={0}
-              className="group relative aspect-square bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
+              className="group relative w-full h-full bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
               onClick={() => onImageClick(successImages, idx)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
@@ -129,16 +202,16 @@ export const ImageGrid = ({
             </div>
           );
         })}
-      </div>
+      </>
     );
   }
 
-  return (
-    <div className={`grid gap-4 ${gridCols}`}>
-      {!hasSlots && isGenerating && params.count > images.length && (
+  return renderGrid(
+    <>
+      {!hasSlots && isGenerating && remainingCards > 0 && (
         // Simple Skeleton
-        Array.from({ length: params.count }).map((_, i) => (
-          <div key={i} className="aspect-square bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center">
+        Array.from({ length: remainingCards }).map((_, i) => (
+          <div key={i} className="w-full h-full bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center">
             <Sparkles className="text-banana-500/30 w-12 h-12 animate-pulse" />
           </div>
         ))
@@ -148,7 +221,7 @@ export const ImageGrid = ({
           key={img.id}
           role="button"
           tabIndex={0}
-          className="group relative aspect-square bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
+          className="group relative w-full h-full bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
           onClick={() => onImageClick(images, idx)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' || e.key === ' ') {
@@ -188,6 +261,6 @@ export const ImageGrid = ({
           </div>
         </div>
       ))}
-    </div>
+    </>
   );
 };

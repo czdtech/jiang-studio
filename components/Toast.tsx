@@ -46,7 +46,7 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onRemove }) => {
 
   return (
     <div
-      className={`flex items-start gap-3 bg-dark-surface border ${borders[toast.type]} rounded-lg p-4 shadow-xl backdrop-blur-sm animate-slide-in max-w-md`}
+      className={`flex items-start gap-3 bg-graphite border ${borders[toast.type]} rounded-[14px] p-4 shadow-[var(--shadow-floating)] backdrop-blur-sm animate-slide-in max-w-md`}
     >
       {icons[toast.type]}
       <p className="flex-1 text-sm text-white">{toast.message}</p>

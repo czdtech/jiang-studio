@@ -37,15 +37,15 @@ export const Tooltip: React.FC<TooltipProps> = ({ content, children, position = 
         {children}
       </div>
       {isVisible && position === 'top' && (
-        <div className="absolute z-50 left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 text-xs leading-relaxed text-white bg-gray-900 rounded-lg shadow-lg whitespace-pre-line min-w-[280px] max-w-sm pointer-events-none">
+        <div className="absolute z-50 left-1/2 -translate-x-1/2 bottom-full mb-2 px-3 py-2 text-xs leading-relaxed text-white bg-graphite rounded-[10px] shadow-[var(--shadow-floating)] whitespace-pre-line min-w-[280px] max-w-sm pointer-events-none">
           {content}
-          <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900" />
+          <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-graphite" />
         </div>
       )}
       {isVisible && position === 'right' && (
-        <div className="absolute z-50 left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-2 text-xs text-white bg-gray-900 rounded-lg shadow-lg whitespace-nowrap pointer-events-none">
+        <div className="absolute z-50 left-full ml-3 top-1/2 -translate-y-1/2 px-3 py-2 text-xs text-white bg-graphite rounded-[10px] shadow-[var(--shadow-floating)] whitespace-nowrap pointer-events-none">
           {content}
-          <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-4 border-b-4 border-r-4 border-transparent border-r-gray-900" />
+          <div className="absolute right-full top-1/2 -translate-y-1/2 w-0 h-0 border-t-4 border-b-4 border-r-4 border-transparent border-r-graphite" />
         </div>
       )}
     </div>

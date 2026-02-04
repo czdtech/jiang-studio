@@ -1,0 +1,1387 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nano Banana Studio - Design System Preview</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <style>
+    /* ========================================
+       CSS Variables - Design Tokens
+       ======================================== */
+    :root {
+      /* Aurora Colors */
+      --aurora-gold: #F7B32B;
+      --aurora-amber: #E09915;
+      --aurora-light: #FFD975;
+
+      /* Background System */
+      --void: #08090A;
+      --obsidian: #0D0E10;
+      --graphite: #16181C;
+      --slate: #1E2028;
+      --ash: #2A2D38;
+      --smoke: #3D4150;
+
+      /* Text Colors */
+      --text-primary: #F4F5F7;
+      --text-secondary: #B8BCC8;
+      --text-muted: #6B7085;
+      --text-disabled: #404559;
+
+      /* Semantic Colors */
+      --success: #34D399;
+      --warning: #FBBF24;
+      --error: #F87171;
+      --info: #60A5FA;
+
+      /* Typography */
+      --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+      --font-body: 'Inter', system-ui, sans-serif;
+
+      /* Spacing */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+      --space-10: 40px;
+      --space-12: 48px;
+
+      /* Radius */
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-xl: 20px;
+      --radius-2xl: 28px;
+      --radius-full: 9999px;
+
+      /* Shadows */
+      --shadow-lifted: 0 2px 8px rgba(0, 0, 0, 0.25);
+      --shadow-floating: 0 8px 24px rgba(0, 0, 0, 0.35);
+      --shadow-glow: 0 0 20px rgba(247, 179, 43, 0.25);
+      --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+
+      /* Transitions */
+      --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+      --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    /* ========================================
+       Base Styles
+       ======================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--obsidian);
+      color: var(--text-primary);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    ::selection {
+      background: rgba(247, 179, 43, 0.3);
+      color: var(--text-primary);
+    }
+
+    /* Reduced Motion */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    /* ========================================
+       Typography
+       ======================================== */
+    h1, h2, h3, h4 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .display { font-size: 48px; line-height: 1.1; }
+    .h1 { font-size: 32px; }
+    .h2 { font-size: 24px; }
+    .h3 { font-size: 18px; }
+    .body { font-size: 15px; }
+    .small { font-size: 13px; }
+    .tiny { font-size: 11px; }
+
+    /* ========================================
+       Layout
+       ======================================== */
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+    }
+
+    .section {
+      padding: var(--space-12) 0;
+    }
+
+    .grid {
+      display: grid;
+      gap: var(--space-6);
+    }
+
+    .grid-2 { grid-template-columns: repeat(2, 1fr); }
+    .grid-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-4 { grid-template-columns: repeat(4, 1fr); }
+
+    @media (max-width: 768px) {
+      .grid-2, .grid-3, .grid-4 {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    /* ========================================
+       Header / Navigation
+       ======================================== */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 64px;
+      background: rgba(13, 14, 16, 0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--ash);
+      z-index: 50;
+      display: flex;
+      align-items: center;
+    }
+
+    .header-inner {
+      width: 100%;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+      background: linear-gradient(135deg, var(--aurora-gold) 0%, var(--aurora-amber) 100%);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--obsidian);
+    }
+
+    .logo-text {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 18px;
+      color: var(--text-primary);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .nav-link {
+      padding: var(--space-2) var(--space-4);
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: var(--radius-md);
+      transition: all 200ms var(--ease-out);
+      cursor: pointer;
+    }
+
+    .nav-link:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-link.active {
+      color: var(--aurora-gold);
+      background: rgba(247, 179, 43, 0.1);
+    }
+
+    /* ========================================
+       Hero Section
+       ======================================== */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-top: 64px;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(247, 179, 43, 0.15), transparent),
+        var(--obsidian);
+    }
+
+    .hero-content {
+      text-align: center;
+      max-width: 800px;
+      padding: var(--space-8);
+    }
+
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      background: rgba(247, 179, 43, 0.1);
+      border: 1px solid rgba(247, 179, 43, 0.3);
+      padding: var(--space-2) var(--space-4);
+      border-radius: var(--radius-full);
+      font-size: 13px;
+      color: var(--aurora-gold);
+      margin-bottom: var(--space-6);
+    }
+
+    .hero-title {
+      font-size: clamp(36px, 8vw, 64px);
+      font-weight: 700;
+      line-height: 1.1;
+      margin-bottom: var(--space-6);
+      background: linear-gradient(135deg, var(--text-primary) 0%, var(--text-secondary) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-title span {
+      background: linear-gradient(135deg, var(--aurora-gold) 0%, var(--aurora-amber) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-desc {
+      font-size: 18px;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-8);
+      line-height: 1.7;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: var(--space-4);
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    /* ========================================
+       Buttons
+       ======================================== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      padding: var(--space-3) var(--space-6);
+      font-family: var(--font-body);
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: var(--radius-md);
+      border: none;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+      text-decoration: none;
+    }
+
+    .btn:focus-visible {
+      outline: 2px solid var(--aurora-gold);
+      outline-offset: 2px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--aurora-gold) 0%, var(--aurora-amber) 100%);
+      color: var(--obsidian);
+      box-shadow: var(--shadow-lifted);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(247, 179, 43, 0.3);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+    }
+
+    .btn-secondary {
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      color: var(--text-primary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--ash);
+      border-color: var(--smoke);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+    }
+
+    .btn-lg {
+      padding: var(--space-4) var(--space-8);
+      font-size: 16px;
+    }
+
+    .btn-sm {
+      padding: var(--space-2) var(--space-4);
+      font-size: 13px;
+    }
+
+    /* ========================================
+       Cards
+       ======================================== */
+    .card {
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      padding: var(--space-6);
+      transition: all 200ms var(--ease-out);
+    }
+
+    .card:hover {
+      border-color: var(--smoke);
+      transform: translateY(-4px);
+      box-shadow: var(--shadow-floating);
+    }
+
+    .card-icon {
+      width: 48px;
+      height: 48px;
+      background: linear-gradient(135deg, rgba(247, 179, 43, 0.2) 0%, rgba(247, 179, 43, 0.05) 100%);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--aurora-gold);
+      margin-bottom: var(--space-4);
+    }
+
+    .card-title {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: var(--space-2);
+    }
+
+    .card-desc {
+      font-size: 14px;
+      color: var(--text-secondary);
+      line-height: 1.6;
+    }
+
+    /* ========================================
+       Form Elements
+       ======================================== */
+    .form-group {
+      margin-bottom: var(--space-5);
+    }
+
+    .form-label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-2);
+    }
+
+    .input {
+      width: 100%;
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-md);
+      padding: var(--space-3) var(--space-4);
+      font-family: var(--font-body);
+      font-size: 15px;
+      color: var(--text-primary);
+      transition: all 200ms var(--ease-out);
+    }
+
+    .input:focus {
+      outline: none;
+      border-color: var(--aurora-gold);
+      box-shadow: 0 0 0 3px rgba(247, 179, 43, 0.15);
+    }
+
+    .input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+
+    .select {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B7085' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 40px;
+      cursor: pointer;
+    }
+
+    /* ========================================
+       Generator Panel Demo
+       ======================================== */
+    .generator {
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+    }
+
+    .generator-header {
+      padding: var(--space-4) var(--space-5);
+      border-bottom: 1px solid var(--ash);
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .generator-header-icon {
+      color: var(--aurora-gold);
+    }
+
+    .generator-header-title {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    .generator-body {
+      padding: var(--space-5);
+    }
+
+    .generator-canvas {
+      aspect-ratio: 16/9;
+      background: var(--void);
+      border: 2px dashed var(--ash);
+      border-radius: var(--radius-lg);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-4);
+      margin-bottom: var(--space-5);
+      color: var(--text-muted);
+    }
+
+    .generator-canvas-icon {
+      width: 64px;
+      height: 64px;
+      opacity: 0.3;
+    }
+
+    .generator-footer {
+      display: flex;
+      gap: var(--space-3);
+      align-items: flex-end;
+    }
+
+    .generator-prompt {
+      flex: 1;
+    }
+
+    .generator-controls {
+      display: flex;
+      gap: var(--space-2);
+    }
+
+    .control-btn {
+      width: 44px;
+      height: 44px;
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .control-btn:hover {
+      background: var(--ash);
+      border-color: var(--smoke);
+      color: var(--text-primary);
+    }
+
+    /* ========================================
+       Image Grid Demo
+       ======================================== */
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: var(--space-4);
+    }
+
+    .image-card {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .image-card:hover {
+      border-color: rgba(247, 179, 43, 0.5);
+      transform: scale(1.02);
+    }
+
+    .image-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .image-card-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 50%);
+      opacity: 0;
+      transition: opacity 200ms var(--ease-out);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: var(--space-4);
+    }
+
+    .image-card:hover .image-card-overlay {
+      opacity: 1;
+    }
+
+    .image-card-actions {
+      display: flex;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .image-card-prompt {
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* ========================================
+       Color Swatches
+       ======================================== */
+    .swatch-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: var(--space-4);
+    }
+
+    .swatch {
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      border: 1px solid var(--ash);
+    }
+
+    .swatch-color {
+      height: 80px;
+    }
+
+    .swatch-info {
+      padding: var(--space-3);
+      background: var(--graphite);
+    }
+
+    .swatch-name {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 2px;
+    }
+
+    .swatch-value {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    /* ========================================
+       Section Headers
+       ======================================== */
+    .section-header {
+      text-align: center;
+      margin-bottom: var(--space-10);
+    }
+
+    .section-tag {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--aurora-gold);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: var(--space-3);
+    }
+
+    .section-title {
+      font-size: 36px;
+      margin-bottom: var(--space-4);
+    }
+
+    .section-desc {
+      font-size: 16px;
+      color: var(--text-secondary);
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    /* ========================================
+       Sidebar Demo
+       ======================================== */
+    .sidebar-demo {
+      display: flex;
+      gap: var(--space-6);
+      min-height: 500px;
+    }
+
+    .sidebar {
+      width: 280px;
+      flex-shrink: 0;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      padding: var(--space-5);
+    }
+
+    .sidebar-section {
+      margin-bottom: var(--space-5);
+    }
+
+    .sidebar-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: var(--space-3);
+    }
+
+    .main-content {
+      flex: 1;
+      min-width: 0;
+    }
+
+    /* ========================================
+       Toast Demo
+       ======================================== */
+    .toast {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: var(--space-3) var(--space-5);
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      font-size: 14px;
+      box-shadow: var(--shadow-floating);
+    }
+
+    .toast-success {
+      border-color: var(--success);
+      background: rgba(52, 211, 153, 0.1);
+    }
+
+    .toast-error {
+      border-color: var(--error);
+      background: rgba(248, 113, 113, 0.1);
+    }
+
+    .toast-icon {
+      flex-shrink: 0;
+    }
+
+    .toast-success .toast-icon { color: var(--success); }
+    .toast-error .toast-icon { color: var(--error); }
+
+    /* ========================================
+       Badge / Tags
+       ======================================== */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: var(--radius-full);
+      background: var(--slate);
+      color: var(--text-secondary);
+    }
+
+    .badge-gold {
+      background: rgba(247, 179, 43, 0.15);
+      color: var(--aurora-gold);
+    }
+
+    .badge-success {
+      background: rgba(52, 211, 153, 0.15);
+      color: var(--success);
+    }
+
+    /* ========================================
+       Divider
+       ======================================== */
+    .divider {
+      height: 1px;
+      background: var(--ash);
+      margin: var(--space-8) 0;
+    }
+
+    /* ========================================
+       Footer
+       ======================================== */
+    .footer {
+      background: var(--void);
+      border-top: 1px solid var(--ash);
+      padding: var(--space-10) 0;
+      text-align: center;
+    }
+
+    .footer-text {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .footer-link {
+      color: var(--aurora-gold);
+      text-decoration: none;
+    }
+
+    .footer-link:hover {
+      text-decoration: underline;
+    }
+
+    /* ========================================
+       Animations
+       ======================================== */
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 20px rgba(247, 179, 43, 0.2); }
+      50% { box-shadow: 0 0 40px rgba(247, 179, 43, 0.4); }
+    }
+
+    .animate-glow {
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-10px); }
+    }
+
+    .animate-float {
+      animation: float 3s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">
+          <i data-lucide="sparkles" style="width: 20px; height: 20px;"></i>
+        </div>
+        <span class="logo-text">Nano Banana Studio</span>
+      </div>
+      <nav class="nav">
+        <a href="#colors" class="nav-link active">色彩</a>
+        <a href="#typography" class="nav-link">字体</a>
+        <a href="#components" class="nav-link">组件</a>
+        <a href="#generator" class="nav-link">生成器</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Hero -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="hero-badge">
+        <i data-lucide="palette" style="width: 14px; height: 14px;"></i>
+        Design System v2.0
+      </div>
+      <h1 class="hero-title">
+        为 <span>AI 创作</span> 而生的<br>设计语言
+      </h1>
+      <p class="hero-desc">
+        Nano Banana Studio 全新设计系统，融合专业工具的可靠性与创意激发的灵动感，
+        为每一次图像生成带来流畅、愉悦的体验。
+      </p>
+      <div class="hero-actions">
+        <button class="btn btn-primary btn-lg animate-glow">
+          <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+          开始创作
+        </button>
+        <button class="btn btn-secondary btn-lg">
+          <i data-lucide="book-open" style="width: 18px; height: 18px;"></i>
+          查看文档
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Colors Section -->
+  <section id="colors" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Colors</span>
+        <h2 class="section-title">Aurora 色彩系统</h2>
+        <p class="section-desc">以极光金为主色调，搭配深邃的背景层级，营造专业而温暖的视觉氛围</p>
+      </div>
+
+      <h3 class="h3" style="margin-bottom: var(--space-4);">品牌主色</h3>
+      <div class="swatch-grid" style="margin-bottom: var(--space-8);">
+        <div class="swatch">
+          <div class="swatch-color" style="background: #F7B32B;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Aurora Gold</div>
+            <div class="swatch-value">#F7B32B</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #E09915;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Aurora Amber</div>
+            <div class="swatch-value">#E09915</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #FFD975;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Aurora Light</div>
+            <div class="swatch-value">#FFD975</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="h3" style="margin-bottom: var(--space-4);">背景层级</h3>
+      <div class="swatch-grid" style="margin-bottom: var(--space-8);">
+        <div class="swatch">
+          <div class="swatch-color" style="background: #08090A;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Void</div>
+            <div class="swatch-value">#08090A</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #0D0E10;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Obsidian</div>
+            <div class="swatch-value">#0D0E10</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #16181C;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Graphite</div>
+            <div class="swatch-value">#16181C</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #1E2028;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Slate</div>
+            <div class="swatch-value">#1E2028</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #2A2D38;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Ash</div>
+            <div class="swatch-value">#2A2D38</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #3D4150;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Smoke</div>
+            <div class="swatch-value">#3D4150</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="h3" style="margin-bottom: var(--space-4);">语义色彩</h3>
+      <div class="swatch-grid">
+        <div class="swatch">
+          <div class="swatch-color" style="background: #34D399;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Success</div>
+            <div class="swatch-value">#34D399</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #FBBF24;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Warning</div>
+            <div class="swatch-value">#FBBF24</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #F87171;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Error</div>
+            <div class="swatch-value">#F87171</div>
+          </div>
+        </div>
+        <div class="swatch">
+          <div class="swatch-color" style="background: #60A5FA;"></div>
+          <div class="swatch-info">
+            <div class="swatch-name">Info</div>
+            <div class="swatch-value">#60A5FA</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider container"></div>
+
+  <!-- Typography Section -->
+  <section id="typography" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Typography</span>
+        <h2 class="section-title">字体排版</h2>
+        <p class="section-desc">Plus Jakarta Sans + Inter 专业组合，兼顾品牌辨识度与阅读舒适度</p>
+      </div>
+
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-icon">
+            <i data-lucide="heading" style="width: 24px; height: 24px;"></i>
+          </div>
+          <h3 class="card-title">标题字体</h3>
+          <p class="card-desc" style="margin-bottom: var(--space-5);">Plus Jakarta Sans - 现代友好，适合产品界面</p>
+          <div style="font-family: 'Plus Jakarta Sans'; font-weight: 700; font-size: 32px; margin-bottom: var(--space-3);">
+            Nano Banana Studio
+          </div>
+          <div style="font-family: 'Plus Jakarta Sans'; font-weight: 600; font-size: 24px; color: var(--text-secondary);">
+            AI 图像生成工作室
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-icon">
+            <i data-lucide="type" style="width: 24px; height: 24px;"></i>
+          </div>
+          <h3 class="card-title">正文字体</h3>
+          <p class="card-desc" style="margin-bottom: var(--space-5);">Inter - 清晰易读，适合长文本</p>
+          <div style="font-size: 15px; line-height: 1.7; color: var(--text-secondary);">
+            使用先进的 AI 模型，将你的文字描述转化为精美图像。
+            支持多种风格与比例，满足各类创作需求。
+            无论是产品设计、艺术创作还是内容生成，都能轻松驾驭。
+          </div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 class="h3" style="margin-bottom: var(--space-5);">字体大小层级</h3>
+      <div class="card" style="overflow-x: auto;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr style="border-bottom: 1px solid var(--ash);">
+            <td style="padding: var(--space-3); font-size: 48px; font-family: var(--font-display); font-weight: 700;">Display</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">48px / 1.1</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--ash);">
+            <td style="padding: var(--space-3); font-size: 32px; font-family: var(--font-display); font-weight: 700;">Heading 1</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">32px / 1.2</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--ash);">
+            <td style="padding: var(--space-3); font-size: 24px; font-family: var(--font-display); font-weight: 600;">Heading 2</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">24px / 1.3</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--ash);">
+            <td style="padding: var(--space-3); font-size: 18px; font-family: var(--font-display); font-weight: 600;">Heading 3</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">18px / 1.4</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--ash);">
+            <td style="padding: var(--space-3); font-size: 15px;">Body Text</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">15px / 1.6</td>
+          </tr>
+          <tr style="border-bottom: 1px solid var(--ash);">
+            <td style="padding: var(--space-3); font-size: 13px; color: var(--text-secondary);">Small Text</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">13px / 1.5</td>
+          </tr>
+          <tr>
+            <td style="padding: var(--space-3); font-size: 11px; color: var(--text-muted);">Tiny Text</td>
+            <td style="padding: var(--space-3); color: var(--text-muted);">11px / 1.4</td>
+          </tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider container"></div>
+
+  <!-- Components Section -->
+  <section id="components" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Components</span>
+        <h2 class="section-title">UI 组件库</h2>
+        <p class="section-desc">精心设计的可复用组件，确保界面一致性与交互体验</p>
+      </div>
+
+      <!-- Buttons -->
+      <h3 class="h3" style="margin-bottom: var(--space-5);">按钮</h3>
+      <div class="card" style="margin-bottom: var(--space-8);">
+        <div style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center; margin-bottom: var(--space-6);">
+          <button class="btn btn-primary btn-lg">
+            <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+            生成图像
+          </button>
+          <button class="btn btn-secondary btn-lg">
+            <i data-lucide="settings" style="width: 18px; height: 18px;"></i>
+            设置
+          </button>
+          <button class="btn btn-ghost btn-lg">
+            <i data-lucide="help-circle" style="width: 18px; height: 18px;"></i>
+            帮助
+          </button>
+        </div>
+        <div style="display: flex; flex-wrap: wrap; gap: var(--space-4); align-items: center;">
+          <button class="btn btn-primary">主要按钮</button>
+          <button class="btn btn-secondary">次要按钮</button>
+          <button class="btn btn-ghost">幽灵按钮</button>
+          <button class="btn btn-primary btn-sm">小按钮</button>
+          <button class="btn btn-secondary btn-sm" disabled style="opacity: 0.5; cursor: not-allowed;">禁用态</button>
+        </div>
+      </div>
+
+      <!-- Form Elements -->
+      <h3 class="h3" style="margin-bottom: var(--space-5);">表单元素</h3>
+      <div class="card" style="margin-bottom: var(--space-8);">
+        <div class="grid grid-2">
+          <div class="form-group">
+            <label class="form-label">API Key</label>
+            <input type="password" class="input" placeholder="输入你的 API Key...">
+          </div>
+          <div class="form-group">
+            <label class="form-label">模型选择</label>
+            <select class="input select">
+              <option>Nano Banana Pro</option>
+              <option>Nano Banana</option>
+              <option>Custom Model</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">提示词</label>
+          <textarea class="input textarea" placeholder="描述你想要生成的图像..."></textarea>
+        </div>
+      </div>
+
+      <!-- Cards -->
+      <h3 class="h3" style="margin-bottom: var(--space-5);">功能卡片</h3>
+      <div class="grid grid-3" style="margin-bottom: var(--space-8);">
+        <div class="card">
+          <div class="card-icon">
+            <i data-lucide="wand-2" style="width: 24px; height: 24px;"></i>
+          </div>
+          <h4 class="card-title">智能生成</h4>
+          <p class="card-desc">基于先进 AI 模型，将文字描述转化为精美图像</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">
+            <i data-lucide="layers" style="width: 24px; height: 24px;"></i>
+          </div>
+          <h4 class="card-title">批量处理</h4>
+          <p class="card-desc">支持多提示词并发生成，大幅提升创作效率</p>
+        </div>
+        <div class="card">
+          <div class="card-icon">
+            <i data-lucide="pen-tool" style="width: 24px; height: 24px;"></i>
+          </div>
+          <h4 class="card-title">图像编辑</h4>
+          <p class="card-desc">使用自然语言描述修改，精准调整生成结果</p>
+        </div>
+      </div>
+
+      <!-- Badges & Toasts -->
+      <h3 class="h3" style="margin-bottom: var(--space-5);">徽章与通知</h3>
+      <div class="card">
+        <div style="display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-6);">
+          <span class="badge">默认</span>
+          <span class="badge badge-gold">
+            <i data-lucide="star" style="width: 12px; height: 12px;"></i>
+            收藏
+          </span>
+          <span class="badge badge-success">
+            <i data-lucide="check" style="width: 12px; height: 12px;"></i>
+            已完成
+          </span>
+          <span class="badge">1K</span>
+          <span class="badge">16:9</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: var(--space-3);">
+          <div class="toast toast-success">
+            <i data-lucide="check-circle" class="toast-icon" style="width: 18px; height: 18px;"></i>
+            <span>生成完成：4 张图像已保存</span>
+          </div>
+          <div class="toast toast-error">
+            <i data-lucide="alert-circle" class="toast-icon" style="width: 18px; height: 18px;"></i>
+            <span>生成失败：请检查 API Key</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="divider container"></div>
+
+  <!-- Generator Demo -->
+  <section id="generator" class="section">
+    <div class="container">
+      <div class="section-header">
+        <span class="section-tag">Application</span>
+        <h2 class="section-title">生成器界面</h2>
+        <p class="section-desc">完整的图像生成工作流界面演示</p>
+      </div>
+
+      <div class="sidebar-demo">
+        <!-- Sidebar -->
+        <div class="sidebar">
+          <div class="sidebar-section">
+            <div class="sidebar-label">供应商</div>
+            <select class="input select" style="margin-bottom: var(--space-3);">
+              <option>★ Gemini 官方</option>
+              <option>第三方中转</option>
+              <option>Antigravity Tools</option>
+            </select>
+            <div style="display: flex; gap: var(--space-2);">
+              <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                <i data-lucide="plus" style="width: 14px; height: 14px;"></i>
+                新增
+              </button>
+              <button class="control-btn" style="width: 36px; height: 36px;">
+                <i data-lucide="star" style="width: 14px; height: 14px;"></i>
+              </button>
+              <button class="control-btn" style="width: 36px; height: 36px;">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-label">API Key</div>
+            <input type="password" class="input" placeholder="AIza..." value="••••••••••••••••">
+          </div>
+
+          <div class="sidebar-section">
+            <div class="sidebar-label">模型参数</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2);">
+              <div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">比例</div>
+                <select class="input select" style="font-size: 13px; padding: 8px 12px;">
+                  <option>1:1</option>
+                  <option>16:9</option>
+                  <option>9:16</option>
+                </select>
+              </div>
+              <div>
+                <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">尺寸</div>
+                <select class="input select" style="font-size: 13px; padding: 8px 12px;">
+                  <option>1K</option>
+                  <option>2K</option>
+                  <option>4K</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+          <div class="generator">
+            <div class="generator-header">
+              <i data-lucide="image" class="generator-header-icon" style="width: 18px; height: 18px;"></i>
+              <span class="generator-header-title">生成结果</span>
+              <span class="badge badge-gold" style="margin-left: auto;">Gemini Pro</span>
+            </div>
+            <div class="generator-body">
+              <div class="image-grid" style="margin-bottom: var(--space-5);">
+                <div class="image-card" style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm">
+                        <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">A serene mountain landscape at sunset...</p>
+                  </div>
+                </div>
+                <div class="image-card" style="background: linear-gradient(135deg, #2d132c 0%, #801336 50%, #c72c41 100%);">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm">
+                        <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Abstract geometric patterns...</p>
+                  </div>
+                </div>
+                <div class="image-card" style="background: linear-gradient(135deg, #0a3d62 0%, #1e5f74 50%, #38b2ac 100%);">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm">
+                        <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Underwater coral reef scene...</p>
+                  </div>
+                </div>
+                <div class="image-card" style="background: linear-gradient(135deg, #2c3e50 0%, #4a5568 50%, #718096 100%);">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm">
+                        <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Minimalist architectural design...</p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="generator-footer">
+                <div class="generator-prompt">
+                  <textarea class="input" style="min-height: 48px; resize: none;" placeholder="描述你想要生成的图像...">A beautiful sunset over mountains with golden light rays piercing through clouds</textarea>
+                </div>
+                <div class="generator-controls">
+                  <div class="control-btn" title="参考图">
+                    <i data-lucide="image-plus" style="width: 18px; height: 18px;"></i>
+                  </div>
+                </div>
+                <button class="btn btn-primary" style="height: 48px; padding: 0 24px;">
+                  <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+                  生成 ×4
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <p class="footer-text">
+        Nano Banana Studio Design System v2.0 ·
+        <a href="MASTER.md" class="footer-link">查看完整文档</a>
+      </p>
+    </div>
+  </footer>
+
+  <script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    // Smooth scroll for nav links
+    document.querySelectorAll('.nav-link').forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const targetId = link.getAttribute('href');
+        if (targetId && targetId.startsWith('#')) {
+          const target = document.querySelector(targetId);
+          if (target) {
+            target.scrollIntoView({ behavior: 'smooth' });
+          }
+        }
+
+        // Update active state
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
+      });
+    });
+
+    // Update active nav on scroll
+    const sections = document.querySelectorAll('section[id]');
+    window.addEventListener('scroll', () => {
+      let current = '';
+      sections.forEach(section => {
+        const sectionTop = section.offsetTop;
+        if (scrollY >= sectionTop - 200) {
+          current = section.getAttribute('id');
+        }
+      });
+
+      document.querySelectorAll('.nav-link').forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === '#' + current) {
+          link.classList.add('active');
+        }
+      });
+    });
+  </script>
+</body>
+</html>

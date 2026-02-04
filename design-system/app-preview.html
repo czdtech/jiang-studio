@@ -1,0 +1,3141 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nano Banana Studio - 完整界面预览</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+
+  <style>
+    /* ========================================
+       CSS Variables - Aurora Design System
+       ======================================== */
+    :root {
+      /* Aurora Colors */
+      --aurora-gold: #F7B32B;
+      --aurora-amber: #E09915;
+      --aurora-light: #FFD975;
+
+      /* Background System */
+      --void: #08090A;
+      --obsidian: #0D0E10;
+      --graphite: #16181C;
+      --slate: #1E2028;
+      --ash: #2A2D38;
+      --smoke: #3D4150;
+
+      /* Text Colors */
+      --text-primary: #F4F5F7;
+      --text-secondary: #B8BCC8;
+      --text-muted: #6B7085;
+      --text-disabled: #404559;
+
+      /* Semantic Colors */
+      --success: #34D399;
+      --warning: #FBBF24;
+      --error: #F87171;
+      --info: #60A5FA;
+
+      /* Typography */
+      --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+      --font-body: 'Inter', system-ui, sans-serif;
+
+      /* Spacing */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-8: 32px;
+
+      /* Radius */
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-xl: 20px;
+      --radius-full: 9999px;
+
+      /* Shadows */
+      --shadow-lifted: 0 2px 8px rgba(0, 0, 0, 0.25);
+      --shadow-floating: 0 8px 24px rgba(0, 0, 0, 0.35);
+      --shadow-glow: 0 0 20px rgba(247, 179, 43, 0.25);
+
+      /* Transitions */
+      --ease-out: cubic-bezier(0.33, 1, 0.68, 1);
+    }
+
+    /* ========================================
+       Base Styles
+       ======================================== */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: var(--font-body);
+      background: var(--obsidian);
+      color: var(--text-primary);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    ::selection {
+      background: rgba(247, 179, 43, 0.3);
+      color: var(--text-primary);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+
+    h1, h2, h3, h4 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    /* ========================================
+       Layout
+       ======================================== */
+    .app {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .main-content {
+      flex: 1;
+      padding-top: 56px;
+      padding-bottom: 56px;
+    }
+
+    @media (min-width: 768px) {
+      .main-content {
+        padding-bottom: 0;
+      }
+    }
+
+    .page-container {
+      height: calc(100vh - 56px);
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: var(--space-4);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    .page-main-row {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-height: 0;
+      gap: var(--space-4);
+    }
+
+    @media (min-width: 768px) {
+      .page-main-row {
+        flex-direction: row;
+      }
+    }
+
+    /* ========================================
+       Header Navigation
+       ======================================== */
+    .header {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      background: rgba(13, 14, 16, 0.9);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--ash);
+      z-index: 50;
+      display: none;
+    }
+
+    @media (min-width: 768px) {
+      .header {
+        display: flex;
+        align-items: center;
+      }
+    }
+
+    .header-inner {
+      width: 100%;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-4);
+      display: flex;
+      align-items: center;
+      gap: var(--space-6);
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      flex-shrink: 0;
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--aurora-gold) 0%, var(--aurora-amber) 100%);
+      border-radius: var(--radius-md);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--obsidian);
+    }
+
+    .logo-text {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--text-primary);
+    }
+
+    .nav {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+    }
+
+    .nav-link {
+      padding: var(--space-2) var(--space-3);
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 500;
+      border-radius: var(--radius-md);
+      transition: all 200ms var(--ease-out);
+      cursor: pointer;
+      border: none;
+      background: none;
+    }
+
+    .nav-link:hover {
+      color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .nav-link.active {
+      color: var(--aurora-gold);
+      background: rgba(247, 179, 43, 0.1);
+    }
+
+    /* ========================================
+       Mobile Bottom Navigation
+       ======================================== */
+    .mobile-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      height: 56px;
+      background: rgba(13, 14, 16, 0.95);
+      backdrop-filter: blur(20px);
+      border-top: 1px solid var(--ash);
+      z-index: 50;
+      display: flex;
+    }
+
+    @media (min-width: 768px) {
+      .mobile-nav {
+        display: none;
+      }
+    }
+
+    .mobile-nav-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 10px;
+      font-weight: 500;
+      transition: all 200ms var(--ease-out);
+      cursor: pointer;
+      border: none;
+      background: none;
+    }
+
+    .mobile-nav-item:hover,
+    .mobile-nav-item.active {
+      color: var(--aurora-gold);
+      background: rgba(247, 179, 43, 0.08);
+    }
+
+    /* ========================================
+       Sidebar Panel
+       ======================================== */
+    .sidebar {
+      width: 100%;
+      max-height: 40vh;
+      overflow-y: auto;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      padding: var(--space-4);
+      margin-bottom: var(--space-4);
+    }
+
+    @media (min-width: 768px) {
+      .sidebar {
+        width: 280px;
+        max-height: none;
+        flex-shrink: 0;
+        margin-bottom: 0;
+      }
+    }
+
+    .sidebar-header {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      margin-bottom: var(--space-4);
+    }
+
+    .sidebar-header-icon {
+      color: var(--aurora-gold);
+    }
+
+    .sidebar-header-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .sidebar-section {
+      margin-bottom: var(--space-4);
+    }
+
+    .sidebar-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: var(--space-2);
+    }
+
+    /* ========================================
+       Form Elements
+       ======================================== */
+    .input {
+      width: 100%;
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-md);
+      padding: var(--space-2) var(--space-3);
+      font-family: var(--font-body);
+      font-size: 14px;
+      color: var(--text-primary);
+      transition: all 200ms var(--ease-out);
+    }
+
+    .input:focus {
+      outline: none;
+      border-color: var(--aurora-gold);
+      box-shadow: 0 0 0 3px rgba(247, 179, 43, 0.15);
+    }
+
+    .input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .textarea {
+      min-height: 80px;
+      resize: vertical;
+      line-height: 1.5;
+    }
+
+    .select {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%236B7085' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 36px;
+      cursor: pointer;
+    }
+
+    /* ========================================
+       Buttons
+       ======================================== */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-4);
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: var(--radius-md);
+      border: none;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+      text-decoration: none;
+    }
+
+    .btn:focus-visible {
+      outline: 2px solid var(--aurora-gold);
+      outline-offset: 2px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--aurora-gold) 0%, var(--aurora-amber) 100%);
+      color: var(--obsidian);
+      box-shadow: var(--shadow-lifted);
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(247, 179, 43, 0.3);
+    }
+
+    .btn-secondary {
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      color: var(--text-primary);
+    }
+
+    .btn-secondary:hover {
+      background: var(--ash);
+      border-color: var(--smoke);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-secondary);
+    }
+
+    .btn-ghost:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-primary);
+    }
+
+    .btn-icon {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+    }
+
+    .btn-icon:hover {
+      background: var(--ash);
+      border-color: var(--smoke);
+      color: var(--text-primary);
+    }
+
+    .btn-icon.active {
+      background: rgba(247, 179, 43, 0.15);
+      border-color: var(--aurora-gold);
+      color: var(--aurora-gold);
+    }
+
+    .btn-sm {
+      padding: var(--space-1) var(--space-3);
+      font-size: 12px;
+    }
+
+    .btn-lg {
+      padding: var(--space-3) var(--space-6);
+      font-size: 15px;
+    }
+
+    /* Button group */
+    .btn-group {
+      display: flex;
+      gap: var(--space-1);
+    }
+
+    .btn-group .btn {
+      flex: 1;
+    }
+
+    /* ========================================
+       Provider Selector
+       ======================================== */
+    .provider-actions {
+      display: flex;
+      gap: var(--space-2);
+      margin-top: var(--space-2);
+    }
+
+    /* ========================================
+       Main Generator Area
+       ======================================== */
+    .generator-area {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    /* Canvas / Image Grid */
+    .canvas-area {
+      flex: 1;
+      min-height: 0;
+      background: var(--void);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .canvas-header {
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--ash);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--graphite);
+    }
+
+    .canvas-header-left {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .canvas-header-icon {
+      color: var(--aurora-gold);
+    }
+
+    .canvas-header-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .canvas-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--space-4);
+    }
+
+    /* Batch Progress */
+    .batch-progress {
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3);
+      margin-bottom: var(--space-4);
+    }
+
+    .batch-progress-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-2);
+    }
+
+    .batch-progress-text {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .batch-progress-stats {
+      display: flex;
+      gap: var(--space-3);
+      font-size: 12px;
+    }
+
+    .batch-progress-stats .success { color: var(--success); }
+    .batch-progress-stats .error { color: var(--error); }
+    .batch-progress-stats .pending { color: var(--text-muted); }
+
+    .batch-progress-items {
+      display: flex;
+      gap: var(--space-1);
+      flex-wrap: wrap;
+    }
+
+    .batch-item {
+      width: 24px;
+      height: 24px;
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .batch-item.success {
+      background: rgba(52, 211, 153, 0.2);
+      color: var(--success);
+    }
+
+    .batch-item.running {
+      background: rgba(247, 179, 43, 0.2);
+      color: var(--aurora-gold);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .batch-item.pending {
+      background: var(--ash);
+      color: var(--text-muted);
+    }
+
+    .batch-item.error {
+      background: rgba(248, 113, 113, 0.2);
+      color: var(--error);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Image Grid */
+    .image-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: var(--space-4);
+    }
+
+    .image-card {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .image-card:hover {
+      border-color: rgba(247, 179, 43, 0.5);
+      transform: scale(1.02);
+    }
+
+    .image-card img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .image-card-overlay {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 60%);
+      opacity: 0;
+      transition: opacity 200ms var(--ease-out);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      padding: var(--space-3);
+    }
+
+    .image-card:hover .image-card-overlay {
+      opacity: 1;
+    }
+
+    .image-card-actions {
+      display: flex;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .image-card-prompt {
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .image-card-meta {
+      display: flex;
+      justify-content: space-between;
+      margin-top: var(--space-1);
+    }
+
+    .image-card-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: rgba(0,0,0,0.5);
+      border-radius: var(--radius-sm);
+      color: var(--text-secondary);
+      text-transform: uppercase;
+    }
+
+    /* Empty State */
+    .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 300px;
+      color: var(--text-muted);
+      text-align: center;
+    }
+
+    .empty-state-icon {
+      width: 64px;
+      height: 64px;
+      margin-bottom: var(--space-4);
+      opacity: 0.3;
+    }
+
+    .empty-state-title {
+      font-size: 14px;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-2);
+    }
+
+    .empty-state-desc {
+      font-size: 12px;
+    }
+
+    /* ========================================
+       Prompt Input Area
+       ======================================== */
+    .prompt-area {
+      display: flex;
+      gap: var(--space-4);
+      flex-shrink: 0;
+    }
+
+    .prompt-optimizer-col {
+      width: 280px;
+      flex-shrink: 0;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      padding: var(--space-4);
+    }
+
+    .prompt-input-col {
+      flex: 1;
+      min-width: 0;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      padding: var(--space-4);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .prompt-input-inner {
+      display: flex;
+      gap: var(--space-3);
+      flex: 1;
+      min-height: 0;
+    }
+
+    /* Reference Images Column */
+    .ref-images-col {
+      width: 72px;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .ref-images-list {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .ref-image-thumb {
+      position: relative;
+      width: 72px;
+      height: 72px;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 2px solid var(--ash);
+      transition: all 200ms var(--ease-out);
+      cursor: pointer;
+    }
+
+    .ref-image-thumb:hover {
+      border-color: var(--aurora-gold);
+      transform: scale(1.03);
+    }
+
+    .ref-image-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .ref-image-thumb .ref-remove {
+      position: absolute;
+      top: 2px;
+      right: 2px;
+      width: 18px;
+      height: 18px;
+      background: rgba(0, 0, 0, 0.7);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 150ms;
+    }
+
+    .ref-image-thumb:hover .ref-remove {
+      opacity: 1;
+    }
+
+    .ref-add-thumb {
+      width: 72px;
+      height: 72px;
+      border: 2px dashed var(--ash);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      color: var(--text-muted);
+      font-size: 10px;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+      background: transparent;
+      flex-shrink: 0;
+    }
+
+    .ref-add-thumb:hover {
+      border-color: var(--aurora-gold);
+      color: var(--aurora-gold);
+      background: rgba(247, 179, 43, 0.05);
+    }
+
+    .ref-count-badge {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-align: center;
+      padding-top: var(--space-1);
+    }
+
+    .prompt-textarea-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .prompt-config-col {
+      width: 320px;
+      flex-shrink: 0;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      padding: var(--space-4);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-3);
+    }
+
+    @media (max-width: 1199px) {
+      .prompt-optimizer-col {
+        display: none;
+      }
+      .prompt-config-col {
+        display: none;
+      }
+      .prompt-input-col {
+        width: 100%;
+      }
+    }
+
+    .prompt-row {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+
+    @media (min-width: 1024px) {
+      .prompt-row {
+        flex-direction: row;
+        align-items: flex-end;
+      }
+    }
+
+    .prompt-input-wrapper {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .prompt-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: var(--space-2);
+      display: block;
+    }
+
+    .sample-chips {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      margin-top: var(--space-2);
+    }
+
+    .sample-chip {
+      padding: var(--space-1) var(--space-3);
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-full);
+      font-size: 12px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .sample-chip:hover {
+      border-color: var(--aurora-gold);
+      color: var(--aurora-gold);
+    }
+
+    /* Params Grid */
+    .params-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-2);
+    }
+
+    .param-group {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .param-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-bottom: var(--space-1);
+    }
+
+    .param-select {
+      font-size: 13px;
+      padding: var(--space-2);
+    }
+
+    /* Count Buttons */
+    .count-buttons {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: var(--space-1);
+    }
+
+    .count-btn {
+      height: 36px;
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-md);
+      color: var(--text-secondary);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .count-btn:hover {
+      border-color: var(--smoke);
+      color: var(--text-primary);
+    }
+
+    .count-btn.active {
+      background: rgba(247, 179, 43, 0.15);
+      border-color: var(--aurora-gold);
+      color: var(--aurora-gold);
+    }
+
+    /* Generate Button */
+    .generate-wrapper {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-2);
+    }
+
+    .generate-btn {
+      height: 48px;
+      min-width: 140px;
+      font-size: 15px;
+    }
+
+    .generate-btn .count {
+      opacity: 0.7;
+      font-size: 13px;
+    }
+
+    /* Batch Mode Toggle */
+    .batch-toggle {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .batch-toggle-btn {
+      height: 36px;
+      min-width: 50px;
+    }
+
+    /* Ref Images Button */
+    .ref-images-wrapper {
+      position: relative;
+    }
+
+    .ref-images-btn {
+      display: flex;
+      align-items: center;
+      gap: var(--space-1);
+      height: 36px;
+      padding: 0 var(--space-3);
+    }
+
+    .ref-images-popover {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      right: 0;
+      width: 260px;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3);
+      box-shadow: var(--shadow-floating);
+      z-index: 20;
+    }
+
+    .ref-images-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-2);
+    }
+
+    .ref-images-header span {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .ref-images-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    .ref-image-item {
+      position: relative;
+      aspect-ratio: 1;
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      border: 1px solid var(--ash);
+    }
+
+    .ref-image-item img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .ref-image-remove {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      transition: opacity 200ms;
+      cursor: pointer;
+      border: none;
+    }
+
+    .ref-image-item:hover .ref-image-remove {
+      opacity: 1;
+    }
+
+    .ref-add-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: var(--space-1);
+      height: 32px;
+      width: 100%;
+      background: transparent;
+      border: 1px dashed var(--ash);
+      border-radius: var(--radius-md);
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .ref-add-btn:hover {
+      border-color: var(--aurora-gold);
+      color: var(--aurora-gold);
+    }
+
+    /* ========================================
+       Iteration Assistant Panel
+       ======================================== */
+    .assistant-panel {
+      display: none;
+      width: 320px;
+      flex-shrink: 0;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      position: relative;
+    }
+
+    @media (min-width: 1200px) {
+      .assistant-panel {
+        display: flex;
+        flex-direction: column;
+      }
+    }
+
+    .assistant-resize {
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      cursor: ew-resize;
+      background: transparent;
+      transition: background 200ms;
+    }
+
+    .assistant-resize:hover {
+      background: rgba(247, 179, 43, 0.5);
+    }
+
+    .assistant-header {
+      padding: var(--space-3) var(--space-4);
+      border-bottom: 1px solid var(--ash);
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .assistant-header-icon {
+      color: var(--aurora-gold);
+    }
+
+    .assistant-header-title {
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .assistant-template {
+      padding: var(--space-2) var(--space-4);
+      border-bottom: 1px solid var(--ash);
+    }
+
+    .assistant-template-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: var(--space-2);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .assistant-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--space-4);
+    }
+
+    .assistant-empty {
+      text-align: center;
+      padding: var(--space-8) var(--space-4);
+      color: var(--text-muted);
+    }
+
+    .assistant-empty-title {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: var(--space-2);
+    }
+
+    .assistant-empty-desc {
+      font-size: 12px;
+    }
+
+    .message {
+      margin-bottom: var(--space-4);
+    }
+
+    .message-user {
+      text-align: right;
+    }
+
+    .message-bubble {
+      display: inline-block;
+      max-width: 90%;
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius-lg);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .message-user .message-bubble {
+      background: rgba(247, 179, 43, 0.15);
+      color: var(--aurora-light);
+    }
+
+    .message-assistant .message-bubble {
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      color: var(--text-secondary);
+    }
+
+    .message-use-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      margin-top: var(--space-1);
+      padding: var(--space-1) var(--space-2);
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 11px;
+      cursor: pointer;
+      transition: color 200ms;
+    }
+
+    .message-use-btn:hover {
+      color: var(--aurora-gold);
+    }
+
+    .assistant-input {
+      padding: var(--space-3);
+      border-top: 1px solid var(--ash);
+      display: flex;
+      gap: var(--space-2);
+    }
+
+    .assistant-input input {
+      flex: 1;
+    }
+
+    .assistant-send-btn {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+    }
+
+    /* ========================================
+       Optimizer Settings
+       ======================================== */
+    .optimizer-section {
+      padding: var(--space-3);
+      background: var(--slate);
+      border-radius: var(--radius-md);
+    }
+
+    .optimizer-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-3);
+    }
+
+    .optimizer-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .optimizer-toggle {
+      width: 40px;
+      height: 22px;
+      background: var(--ash);
+      border-radius: var(--radius-full);
+      position: relative;
+      cursor: pointer;
+      transition: background 200ms;
+    }
+
+    .optimizer-toggle.active {
+      background: var(--aurora-gold);
+    }
+
+    .optimizer-toggle::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 18px;
+      height: 18px;
+      background: white;
+      border-radius: 50%;
+      transition: transform 200ms;
+    }
+
+    .optimizer-toggle.active::after {
+      transform: translateX(18px);
+    }
+
+    .optimizer-content {
+      display: none;
+    }
+
+    .optimizer-content.show {
+      display: block;
+    }
+
+    .optimizer-row {
+      display: flex;
+      gap: var(--space-2);
+      margin-bottom: var(--space-2);
+    }
+
+    /* ========================================
+       Badge
+       ======================================== */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      border-radius: var(--radius-full);
+      background: var(--slate);
+      color: var(--text-secondary);
+    }
+
+    .badge-gold {
+      background: rgba(247, 179, 43, 0.15);
+      color: var(--aurora-gold);
+    }
+
+    .badge-success {
+      background: rgba(52, 211, 153, 0.15);
+      color: var(--success);
+    }
+
+    /* ========================================
+       Modal Overlay
+       ======================================== */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(8px);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
+    /* Editor Modal */
+    .editor-modal {
+      position: fixed;
+      inset: 0;
+      background: var(--obsidian);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+    }
+
+    .editor-modal.show {
+      display: flex;
+    }
+
+    .editor-header {
+      height: 56px;
+      border-bottom: 1px solid var(--ash);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 var(--space-6);
+      background: var(--graphite);
+    }
+
+    .editor-header-left {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .editor-header-icon {
+      color: var(--aurora-gold);
+    }
+
+    .editor-header-title {
+      font-family: var(--font-display);
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .editor-header-right {
+      display: flex;
+      align-items: center;
+      gap: var(--space-4);
+    }
+
+    .editor-canvas {
+      flex: 1;
+      background: var(--void);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: var(--space-6);
+    }
+
+    .editor-canvas img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border: 1px solid var(--ash);
+      box-shadow: var(--shadow-floating);
+    }
+
+    .editor-controls {
+      height: 200px;
+      background: var(--graphite);
+      border-top: 1px solid var(--ash);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .editor-tips {
+      flex: 1;
+      overflow-y: auto;
+      padding: var(--space-4);
+    }
+
+    .editor-tip {
+      background: var(--slate);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3);
+      margin-bottom: var(--space-2);
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+
+    .editor-tip strong {
+      color: var(--aurora-gold);
+    }
+
+    .editor-input-area {
+      padding: var(--space-4);
+      border-top: 1px solid var(--ash);
+      background: rgba(0,0,0,0.3);
+    }
+
+    .editor-input-row {
+      max-width: 800px;
+      margin: 0 auto;
+      display: flex;
+      gap: var(--space-2);
+    }
+
+    .editor-input-row input {
+      flex: 1;
+    }
+
+    /* Preview Modal */
+    .preview-modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.95);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .preview-modal.show {
+      display: flex;
+    }
+
+    .preview-close {
+      position: absolute;
+      top: var(--space-4);
+      right: var(--space-4);
+    }
+
+    .preview-nav {
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 48px;
+      height: 48px;
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 200ms;
+    }
+
+    .preview-nav:hover {
+      background: var(--slate);
+      border-color: var(--smoke);
+    }
+
+    .preview-nav.prev {
+      left: var(--space-4);
+    }
+
+    .preview-nav.next {
+      right: var(--space-4);
+    }
+
+    .preview-image {
+      max-width: 90vw;
+      max-height: 85vh;
+      object-fit: contain;
+    }
+
+    .preview-info {
+      position: absolute;
+      bottom: var(--space-4);
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      padding: var(--space-3) var(--space-5);
+      display: flex;
+      align-items: center;
+      gap: var(--space-4);
+    }
+
+    .preview-prompt {
+      font-size: 13px;
+      color: var(--text-secondary);
+      max-width: 400px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .preview-actions {
+      display: flex;
+      gap: var(--space-2);
+    }
+
+    /* ========================================
+       Portfolio Page
+       ======================================== */
+    .portfolio-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: var(--space-4);
+    }
+
+    .portfolio-title {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .portfolio-title h2 {
+      font-size: 24px;
+    }
+
+    .portfolio-title-icon {
+      color: var(--aurora-gold);
+    }
+
+    .portfolio-count {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    .portfolio-controls {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+    }
+
+    .folder-indicator {
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+    }
+
+    .folder-indicator-icon {
+      color: var(--text-muted);
+    }
+
+    .folder-indicator-name {
+      font-size: 12px;
+      color: var(--text-secondary);
+      max-width: 180px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .portfolio-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: var(--space-4);
+    }
+
+    .portfolio-card {
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 200ms var(--ease-out);
+    }
+
+    .portfolio-card:hover {
+      border-color: rgba(247, 179, 43, 0.5);
+      transform: translateY(-2px);
+    }
+
+    .portfolio-card-image {
+      position: relative;
+      aspect-ratio: 1;
+      background: var(--void);
+    }
+
+    .portfolio-card-image img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .portfolio-card-actions {
+      position: absolute;
+      top: var(--space-2);
+      right: var(--space-2);
+      display: flex;
+      gap: var(--space-1);
+      opacity: 0;
+      transition: opacity 200ms;
+    }
+
+    .portfolio-card:hover .portfolio-card-actions {
+      opacity: 1;
+    }
+
+    .portfolio-action-btn {
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      background: rgba(0,0,0,0.6);
+      backdrop-filter: blur(4px);
+      border: none;
+      border-radius: 50%;
+      color: white;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 200ms;
+    }
+
+    .portfolio-action-btn:hover {
+      background: var(--aurora-gold);
+      color: var(--obsidian);
+    }
+
+    .portfolio-action-btn.delete:hover {
+      background: var(--error);
+      color: white;
+    }
+
+    .portfolio-card-info {
+      padding: var(--space-3);
+    }
+
+    .portfolio-card-prompt {
+      font-size: 12px;
+      color: var(--text-muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      margin-bottom: var(--space-2);
+    }
+
+    .portfolio-card-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-disabled);
+    }
+
+    .load-more-btn {
+      display: block;
+      width: 100%;
+      max-width: 300px;
+      margin: var(--space-6) auto 0;
+      padding: var(--space-3);
+      background: var(--graphite);
+      border: 1px solid var(--ash);
+      border-radius: var(--radius-lg);
+      color: var(--text-muted);
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 200ms;
+    }
+
+    .load-more-btn:hover {
+      border-color: var(--smoke);
+      color: var(--text-primary);
+    }
+
+    /* ========================================
+       Hidden helper
+       ======================================== */
+    .hidden {
+      display: none !important;
+    }
+
+    /* ========================================
+       Scrollbar
+       ======================================== */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--obsidian);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--smoke);
+      border-radius: 4px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Desktop Header -->
+    <header class="header">
+      <div class="header-inner">
+        <div class="logo">
+          <div class="logo-icon">
+            <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+          </div>
+          <span class="logo-text">Nano Banana Studio</span>
+        </div>
+        <nav class="nav">
+          <button class="nav-link active" data-page="gemini">Gemini 官方</button>
+          <button class="nav-link" data-page="proxy">第三方中转</button>
+          <button class="nav-link" data-page="ag">Antigravity</button>
+          <button class="nav-link" data-page="kie">Kie AI</button>
+          <button class="nav-link" data-page="portfolio">作品集</button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Mobile Bottom Nav -->
+    <nav class="mobile-nav">
+      <button class="mobile-nav-item active" data-page="gemini">
+        <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+        <span>Gemini</span>
+      </button>
+      <button class="mobile-nav-item" data-page="proxy">
+        <i data-lucide="arrow-right-left" style="width: 18px; height: 18px;"></i>
+        <span>中转</span>
+      </button>
+      <button class="mobile-nav-item" data-page="ag">
+        <i data-lucide="zap" style="width: 18px; height: 18px;"></i>
+        <span>AG</span>
+      </button>
+      <button class="mobile-nav-item" data-page="kie">
+        <i data-lucide="bot" style="width: 18px; height: 18px;"></i>
+        <span>Kie</span>
+      </button>
+      <button class="mobile-nav-item" data-page="portfolio">
+        <i data-lucide="images" style="width: 18px; height: 18px;"></i>
+        <span>作品</span>
+      </button>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Generator Page -->
+      <div class="page-container" id="page-gemini">
+        <div class="page-main-row">
+        <!-- Left Sidebar -->
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <i data-lucide="settings" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="sidebar-header-title">Gemini 设置</span>
+          </div>
+
+          <!-- Provider Selector -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">供应商</label>
+            <select class="input select">
+              <option>★ Gemini 官方</option>
+              <option>备用供应商</option>
+            </select>
+            <div class="provider-actions">
+              <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                <i data-lucide="plus" style="width: 14px; height: 14px;"></i>
+                新增
+              </button>
+              <button class="btn-icon btn-sm active" title="收藏">
+                <i data-lucide="star" style="width: 14px; height: 14px;"></i>
+              </button>
+              <button class="btn-icon btn-sm" title="删除">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- API Key -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">API Key</label>
+            <input type="password" class="input" placeholder="AIza..." value="••••••••••••••••">
+          </div>
+        </aside>
+
+        <!-- Generator Area -->
+        <div class="generator-area">
+          <!-- Canvas -->
+          <div class="canvas-area">
+            <div class="canvas-header">
+              <div class="canvas-header-left">
+                <i data-lucide="image" class="canvas-header-icon" style="width: 16px; height: 16px;"></i>
+                <span class="canvas-header-title">生成结果</span>
+              </div>
+              <span class="badge badge-gold">Nano Banana Pro</span>
+            </div>
+            <div class="canvas-body">
+              <!-- Batch Progress (shown when batch mode) -->
+              <div class="batch-progress">
+                <div class="batch-progress-header">
+                  <span class="batch-progress-text">批量任务进度：6/8</span>
+                  <div class="batch-progress-stats">
+                    <span class="success">5 成功</span>
+                    <span class="error">1 失败</span>
+                    <span class="pending">2 进行中</span>
+                  </div>
+                </div>
+                <div class="batch-progress-items">
+                  <div class="batch-item success">1</div>
+                  <div class="batch-item success">2</div>
+                  <div class="batch-item success">3</div>
+                  <div class="batch-item error">4</div>
+                  <div class="batch-item success">5</div>
+                  <div class="batch-item success">6</div>
+                  <div class="batch-item running">7</div>
+                  <div class="batch-item pending">8</div>
+                </div>
+              </div>
+
+              <!-- Image Grid -->
+              <div class="image-grid">
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/a1/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">A serene mountain landscape at golden hour...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">1K</span>
+                      <span class="image-card-badge">1:1</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/a2/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Abstract geometric patterns with vibrant colors...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">2K</span>
+                      <span class="image-card-badge">16:9</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/a3/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Underwater coral reef with tropical fish...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">1K</span>
+                      <span class="image-card-badge">1:1</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/a4/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Minimalist architectural design with clean lines...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">4K</span>
+                      <span class="image-card-badge">3:4</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Iteration Assistant -->
+        <aside class="assistant-panel">
+          <div class="assistant-resize"></div>
+          <div class="assistant-header">
+            <i data-lucide="message-circle" class="assistant-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="assistant-header-title">迭代助手</span>
+          </div>
+          <div class="assistant-template">
+            <button class="assistant-template-btn">
+              <span>模板：图像迭代</span>
+              <i data-lucide="chevron-down" style="width: 14px; height: 14px;"></i>
+            </button>
+          </div>
+          <div class="assistant-messages">
+            <div class="message message-user">
+              <div class="message-bubble">让画面更温暖一些</div>
+            </div>
+            <div class="message message-assistant">
+              <div class="message-bubble">A beautiful sunset over mountains with warm golden and amber light rays piercing through clouds, soft orange glow illuminating the peaks, photorealistic style with cozy atmosphere</div>
+              <button class="message-use-btn">
+                <i data-lucide="check" style="width: 12px; height: 12px;"></i>
+                使用此版本
+              </button>
+            </div>
+            <div class="message message-user">
+              <div class="message-bubble">添加一些飞鸟</div>
+            </div>
+            <div class="message message-assistant">
+              <div class="message-bubble">A beautiful sunset over mountains with warm golden and amber light rays piercing through clouds, silhouettes of migrating birds flying across the sky, soft orange glow illuminating the peaks, photorealistic style with cozy atmosphere</div>
+              <button class="message-use-btn">
+                <i data-lucide="check" style="width: 12px; height: 12px;"></i>
+                使用此版本
+              </button>
+            </div>
+          </div>
+          <div class="assistant-input">
+            <input type="text" class="input" placeholder="输入你的需求...">
+            <button class="btn btn-primary assistant-send-btn">
+              <i data-lucide="send" style="width: 16px; height: 16px;"></i>
+            </button>
+          </div>
+        </aside>
+        </div><!-- end page-main-row -->
+
+        <!-- Prompt Input (Three Columns) -->
+        <div class="prompt-area">
+          <!-- Left: Optimizer -->
+          <div class="prompt-optimizer-col">
+            <div class="sidebar-header" style="margin-bottom: var(--space-3);">
+              <i data-lucide="wand-2" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+              <span class="sidebar-header-title">提示词优化器</span>
+            </div>
+            <div class="optimizer-section" style="background: transparent; padding: 0;">
+              <div class="optimizer-header">
+                <span class="optimizer-title">自动优化</span>
+                <div class="optimizer-toggle active" id="optimizer-toggle"></div>
+              </div>
+              <div class="optimizer-content show" id="optimizer-content">
+                <div class="optimizer-row">
+                  <select class="input select" style="font-size: 12px; padding: 6px 8px;">
+                    <option>通用优化模板</option>
+                    <option>风格强化模板</option>
+                    <option>细节增强模板</option>
+                  </select>
+                </div>
+                <div class="optimizer-row">
+                  <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                    <i data-lucide="wand-2" style="width: 12px; height: 12px;"></i>
+                    手动优化
+                  </button>
+                </div>
+                <div style="font-size: 11px; color: var(--text-muted);">
+                  生成时自动优化提示词
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Center: Prompt Input with Ref Images -->
+          <div class="prompt-input-col">
+            <label class="prompt-label">提示词</label>
+            <div class="prompt-input-inner">
+              <!-- Reference Images -->
+              <div class="ref-images-col">
+                <div class="ref-images-list">
+                  <div class="ref-image-thumb">
+                    <img src="https://picsum.photos/seed/ref1/100/100" alt="Ref">
+                    <button class="ref-remove">
+                      <i data-lucide="x" style="width: 10px; height: 10px;"></i>
+                    </button>
+                  </div>
+                  <div class="ref-image-thumb">
+                    <img src="https://picsum.photos/seed/ref2/100/100" alt="Ref">
+                    <button class="ref-remove">
+                      <i data-lucide="x" style="width: 10px; height: 10px;"></i>
+                    </button>
+                  </div>
+                </div>
+                <button class="ref-add-thumb">
+                  <i data-lucide="image-plus" style="width: 16px; height: 16px;"></i>
+                  <span>添加</span>
+                </button>
+                <div class="ref-count-badge">2/14</div>
+              </div>
+              <!-- Textarea -->
+              <div class="prompt-textarea-wrapper">
+                <textarea class="input textarea" style="flex: 1; min-height: 80px; resize: none;" placeholder="描述你想要生成的图像...">A beautiful sunset over mountains with golden light rays piercing through clouds, photorealistic style</textarea>
+                <div class="sample-chips">
+                  <span class="sample-chip">日落山景</span>
+                  <span class="sample-chip">未来都市</span>
+                  <span class="sample-chip">水彩风格</span>
+                  <span class="sample-chip">赛博朋克</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Config & Generate -->
+          <div class="prompt-config-col">
+            <div class="params-grid">
+              <div class="param-group">
+                <label class="param-label">模型</label>
+                <select class="input select param-select">
+                  <option>Nano Pro</option>
+                  <option>Nano</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label class="param-label">比例</label>
+                <select class="input select param-select">
+                  <option>1:1</option>
+                  <option>16:9</option>
+                  <option>9:16</option>
+                  <option>4:3</option>
+                  <option>3:4</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label class="param-label">尺寸</label>
+                <select class="input select param-select">
+                  <option>1K</option>
+                  <option>2K</option>
+                  <option>4K</option>
+                </select>
+              </div>
+            </div>
+
+            <div style="display: flex; gap: var(--space-2); align-items: flex-end;">
+              <div class="batch-toggle">
+                <label class="param-label">批量</label>
+                <button class="btn btn-secondary batch-toggle-btn active">开</button>
+              </div>
+              <div style="flex: 1;">
+                <label class="param-label">数量</label>
+                <div class="count-buttons">
+                  <button class="count-btn">1</button>
+                  <button class="count-btn">2</button>
+                  <button class="count-btn">3</button>
+                  <button class="count-btn active">4</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="generate-wrapper" style="margin-top: auto;">
+              <span style="font-size: 12px; color: var(--aurora-gold); text-align: center;">批量模式：8 个任务</span>
+              <button class="btn btn-primary btn-lg generate-btn" style="width: 100%;">
+                <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+                批量生成
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Third-party Proxy Page -->
+      <div class="page-container hidden" id="page-proxy">
+        <div class="page-main-row">
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <i data-lucide="arrow-right-left" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="sidebar-header-title">第三方中转 设置</span>
+          </div>
+
+          <!-- Provider Selector -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">供应商</label>
+            <select class="input select">
+              <option>★ OpenAI 代理</option>
+              <option>Silicon Flow</option>
+              <option>DeepSeek</option>
+            </select>
+            <div class="provider-actions">
+              <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                <i data-lucide="plus" style="width: 14px; height: 14px;"></i>
+                新增
+              </button>
+              <button class="btn-icon btn-sm active" title="收藏">
+                <i data-lucide="star" style="width: 14px; height: 14px;"></i>
+              </button>
+              <button class="btn-icon btn-sm" title="删除">
+                <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+              </button>
+            </div>
+          </div>
+
+          <!-- API Base URL -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">Base URL</label>
+            <input type="text" class="input" placeholder="https://api.openai.com/v1" value="https://api.siliconflow.cn/v1">
+          </div>
+
+          <!-- API Key -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">API Key</label>
+            <input type="password" class="input" placeholder="sk-..." value="••••••••••••••••">
+          </div>
+
+          <!-- Custom Model Input with Datalist -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">模型 <span style="color: var(--text-muted); font-weight: normal;">(可自定义)</span></label>
+            <div style="position: relative;">
+              <input type="text" class="input" list="proxy-models" placeholder="输入或选择模型..." value="gpt-image-1" style="padding-right: 32px;">
+              <datalist id="proxy-models">
+                <option value="gpt-image-1">
+                <option value="dall-e-3">
+                <option value="Kwai-Kolors/Kolors">
+                <option value="stabilityai/stable-diffusion-3">
+              </datalist>
+              <button class="btn-icon btn-sm" style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px;" title="刷新模型列表">
+                <i data-lucide="refresh-cw" style="width: 12px; height: 12px;"></i>
+              </button>
+            </div>
+            <div style="margin-top: 6px; font-size: 11px; color: var(--success); display: flex; align-items: center; gap: 4px;">
+              <i data-lucide="check-circle" style="width: 12px; height: 12px;"></i>
+              已加载 4 个可用模型
+            </div>
+          </div>
+
+        </aside>
+
+        <!-- Generator Area (same structure, different content) -->
+        <div class="generator-area">
+          <div class="canvas-area">
+            <div class="canvas-header">
+              <div class="canvas-header-left">
+                <i data-lucide="image" class="canvas-header-icon" style="width: 16px; height: 16px;"></i>
+                <span class="canvas-header-title">生成结果</span>
+              </div>
+              <span class="badge">第三方中转</span>
+            </div>
+            <div class="canvas-body">
+              <div class="empty-state">
+                <i data-lucide="image" class="empty-state-icon"></i>
+                <p class="empty-state-title">开始创作</p>
+                <p class="empty-state-desc">输入提示词，使用第三方 API 生成图像</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Iteration Assistant -->
+        <aside class="assistant-panel">
+          <div class="assistant-resize"></div>
+          <div class="assistant-header">
+            <i data-lucide="message-circle" class="assistant-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="assistant-header-title">迭代助手</span>
+          </div>
+          <div class="assistant-messages">
+            <div class="assistant-empty">
+              <p class="assistant-empty-title">开始对话</p>
+              <p class="assistant-empty-desc">选择图片后，在这里描述修改需求</p>
+            </div>
+          </div>
+          <div class="assistant-input">
+            <input type="text" class="input" placeholder="输入你的需求...">
+            <button class="btn btn-primary assistant-send-btn">
+              <i data-lucide="send" style="width: 16px; height: 16px;"></i>
+            </button>
+          </div>
+        </aside>
+        </div><!-- end page-main-row -->
+
+        <!-- Prompt Area (Three Columns) -->
+        <div class="prompt-area">
+          <!-- Left: Optimizer -->
+          <div class="prompt-optimizer-col">
+            <div class="sidebar-header" style="margin-bottom: var(--space-3);">
+              <i data-lucide="wand-2" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+              <span class="sidebar-header-title">提示词优化器</span>
+            </div>
+            <div class="optimizer-section" style="background: transparent; padding: 0;">
+              <div class="optimizer-header">
+                <span class="optimizer-title">自动优化</span>
+                <div class="optimizer-toggle active"></div>
+              </div>
+              <div class="optimizer-content show">
+                <div class="optimizer-row">
+                  <select class="input select" style="font-size: 12px; padding: 6px 8px;">
+                    <option>通用优化模板</option>
+                    <option>风格强化模板</option>
+                  </select>
+                </div>
+                <div class="optimizer-row">
+                  <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                    <i data-lucide="wand-2" style="width: 12px; height: 12px;"></i>
+                    手动优化
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Center: Prompt Input with Ref Images -->
+          <div class="prompt-input-col">
+            <label class="prompt-label">提示词</label>
+            <div class="prompt-input-inner">
+              <!-- Reference Images -->
+              <div class="ref-images-col">
+                <div class="ref-images-list"></div>
+                <button class="ref-add-thumb">
+                  <i data-lucide="image-plus" style="width: 16px; height: 16px;"></i>
+                  <span>添加</span>
+                </button>
+                <div class="ref-count-badge">0/4</div>
+              </div>
+              <!-- Textarea -->
+              <div class="prompt-textarea-wrapper">
+                <textarea class="input textarea" style="flex: 1; min-height: 80px; resize: none;" placeholder="描述你想要生成的图像..."></textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Config & Generate -->
+          <div class="prompt-config-col">
+            <div class="params-grid">
+              <div class="param-group">
+                <label class="param-label">比例</label>
+                <select class="input select param-select">
+                  <option>1:1</option>
+                  <option>16:9</option>
+                  <option>9:16</option>
+                  <option>4:3</option>
+                  <option>3:4</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label class="param-label">尺寸</label>
+                <select class="input select param-select">
+                  <option>1K</option>
+                  <option>2K</option>
+                  <option>4K</option>
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: var(--space-2); align-items: flex-end;">
+              <div class="batch-toggle">
+                <label class="param-label">批量</label>
+                <button class="btn btn-secondary batch-toggle-btn">关</button>
+              </div>
+              <div style="flex: 1;">
+                <label class="param-label">数量</label>
+                <div class="count-buttons">
+                  <button class="count-btn active">1</button>
+                  <button class="count-btn">2</button>
+                  <button class="count-btn">3</button>
+                  <button class="count-btn">4</button>
+                </div>
+              </div>
+            </div>
+            <div class="generate-wrapper" style="margin-top: auto;">
+              <div style="font-size: 11px; color: var(--info); display: flex; align-items: center; gap: 4px;">
+                <i data-lucide="radio" style="width: 12px; height: 12px;"></i>
+                SSE 流式响应
+              </div>
+              <button class="btn btn-primary btn-lg generate-btn" style="width: 100%;">
+                <i data-lucide="sparkles" style="width: 18px; height: 18px;"></i>
+                生成
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Antigravity Page -->
+      <div class="page-container hidden" id="page-ag">
+        <div class="page-main-row">
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <i data-lucide="zap" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="sidebar-header-title">Antigravity 设置</span>
+          </div>
+
+          <!-- Provider Selector -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">供应商</label>
+            <select class="input select">
+              <option>★ Antigravity Tools</option>
+            </select>
+          </div>
+
+          <!-- API Base URL -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">Base URL</label>
+            <input type="text" class="input" value="https://api.antigravity.tools/v1" readonly style="background: var(--graphite); cursor: not-allowed;">
+          </div>
+
+          <!-- API Key (Optional) -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">
+              API Key
+              <span class="badge badge-success" style="margin-left: 6px; font-size: 9px;">可选</span>
+            </label>
+            <input type="password" class="input" placeholder="可留空使用免费额度...">
+            <div style="margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+              <i data-lucide="info" style="width: 11px; height: 11px; vertical-align: -1px;"></i>
+              留空时使用公共免费额度，有速率限制
+            </div>
+          </div>
+
+          <!-- Custom Model Input -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">模型 <span style="color: var(--text-muted); font-weight: normal;">(可自定义)</span></label>
+            <div style="position: relative;">
+              <input type="text" class="input" list="ag-models" placeholder="输入或选择模型..." value="gpt-image-1" style="padding-right: 32px;">
+              <datalist id="ag-models">
+                <option value="gpt-image-1">
+                <option value="dall-e-3">
+                <option value="flux-1-schnell">
+              </datalist>
+              <button class="btn-icon btn-sm" style="position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px;" title="刷新模型列表">
+                <i data-lucide="refresh-cw" style="width: 12px; height: 12px;"></i>
+              </button>
+            </div>
+            <div style="margin-top: 6px; font-size: 11px; color: var(--aurora-gold); display: flex; align-items: center; gap: 4px;">
+              <i data-lucide="loader" style="width: 12px; height: 12px;" class="spin"></i>
+              正在加载模型列表...
+            </div>
+          </div>
+
+        </aside>
+
+        <!-- Generator Area -->
+        <div class="generator-area">
+          <div class="canvas-area">
+            <div class="canvas-header">
+              <div class="canvas-header-left">
+                <i data-lucide="image" class="canvas-header-icon" style="width: 16px; height: 16px;"></i>
+                <span class="canvas-header-title">生成结果</span>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="badge badge-gold">
+                  <i data-lucide="zap" style="width: 10px; height: 10px;"></i>
+                  Antigravity
+                </span>
+              </div>
+            </div>
+            <div class="canvas-body">
+              <div class="image-grid">
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/ag1/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Cyberpunk cityscape at night...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">AG</span>
+                      <span class="image-card-badge">1:1</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/ag2/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Abstract digital art with neon colors...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">AG</span>
+                      <span class="image-card-badge">16:9</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Iteration Assistant -->
+        <aside class="assistant-panel">
+          <div class="assistant-resize"></div>
+          <div class="assistant-header">
+            <i data-lucide="message-circle" class="assistant-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="assistant-header-title">迭代助手</span>
+          </div>
+          <div class="assistant-messages">
+            <div class="assistant-empty">
+              <p class="assistant-empty-title">开始对话</p>
+              <p class="assistant-empty-desc">选择图片后，在这里描述修改需求</p>
+            </div>
+          </div>
+          <div class="assistant-input">
+            <input type="text" class="input" placeholder="输入你的需求...">
+            <button class="btn btn-primary assistant-send-btn">
+              <i data-lucide="send" style="width: 16px; height: 16px;"></i>
+            </button>
+          </div>
+        </aside>
+        </div><!-- end page-main-row -->
+
+        <!-- Prompt Area (Three Columns) -->
+        <div class="prompt-area">
+          <!-- Left: Optimizer -->
+          <div class="prompt-optimizer-col">
+            <div class="sidebar-header" style="margin-bottom: var(--space-3);">
+              <i data-lucide="wand-2" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+              <span class="sidebar-header-title">提示词优化器</span>
+            </div>
+            <div class="optimizer-section" style="background: transparent; padding: 0;">
+              <div class="optimizer-header">
+                <span class="optimizer-title">自动优化</span>
+                <div class="optimizer-toggle"></div>
+              </div>
+              <div class="optimizer-content">
+                <div class="optimizer-row">
+                  <select class="input select" style="font-size: 12px; padding: 6px 8px;">
+                    <option>通用优化模板</option>
+                  </select>
+                </div>
+                <div class="optimizer-row">
+                  <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                    <i data-lucide="wand-2" style="width: 12px; height: 12px;"></i>
+                    手动优化
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Center: Prompt Input with Ref Images -->
+          <div class="prompt-input-col">
+            <label class="prompt-label">提示词</label>
+            <div class="prompt-input-inner">
+              <!-- Reference Images -->
+              <div class="ref-images-col">
+                <div class="ref-images-list"></div>
+                <button class="ref-add-thumb">
+                  <i data-lucide="image-plus" style="width: 16px; height: 16px;"></i>
+                  <span>添加</span>
+                </button>
+                <div class="ref-count-badge">0/4</div>
+              </div>
+              <!-- Textarea -->
+              <div class="prompt-textarea-wrapper">
+                <textarea class="input textarea" style="flex: 1; min-height: 80px; resize: none;" placeholder="描述你想要生成的图像...">Cyberpunk cityscape with flying cars and neon signs</textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Config & Generate -->
+          <div class="prompt-config-col">
+            <!-- Antigravity: 从模型后缀推断比例/尺寸 -->
+            <div>
+              <div style="display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3); background: var(--slate); border-radius: var(--radius-md);">
+                <i data-lucide="info" style="width: 14px; height: 14px; color: var(--aurora-gold);"></i>
+                <span style="font-size: 12px; color: var(--text-secondary);">推断: <strong style="color: var(--text-primary);">2K</strong> • <strong style="color: var(--text-primary);">16:9</strong></span>
+              </div>
+              <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted);">
+                比例/尺寸从模型名后缀自动推断
+              </div>
+            </div>
+            <div style="display: flex; gap: var(--space-2); align-items: flex-end;">
+              <div class="batch-toggle">
+                <label class="param-label">批量</label>
+                <button class="btn btn-secondary batch-toggle-btn">关</button>
+              </div>
+              <div style="flex: 1;">
+                <label class="param-label">数量</label>
+                <div class="count-buttons">
+                  <button class="count-btn active">1</button>
+                  <button class="count-btn">2</button>
+                  <button class="count-btn">3</button>
+                  <button class="count-btn">4</button>
+                </div>
+              </div>
+            </div>
+            <div class="generate-wrapper" style="margin-top: auto;">
+              <button class="btn btn-primary btn-lg generate-btn" style="width: 100%;">
+                <i data-lucide="zap" style="width: 18px; height: 18px;"></i>
+                生成
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kie AI Page -->
+      <div class="page-container hidden" id="page-kie">
+        <div class="page-main-row">
+        <aside class="sidebar">
+          <div class="sidebar-header">
+            <i data-lucide="bot" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="sidebar-header-title">Kie AI 设置</span>
+          </div>
+
+          <!-- Provider Selector -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">供应商</label>
+            <select class="input select">
+              <option>★ Kie AI 官方</option>
+            </select>
+          </div>
+
+          <!-- API Key -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">API Key</label>
+            <input type="password" class="input" placeholder="kie-..." value="••••••••••••••••">
+          </div>
+
+          <!-- Model Selection -->
+          <div class="sidebar-section">
+            <label class="sidebar-label">模型</label>
+            <select class="input select">
+              <option>kie-ai-v1</option>
+              <option>kie-ai-turbo</option>
+            </select>
+          </div>
+
+          <!-- Async Task Status -->
+          <div class="sidebar-section">
+            <div style="background: var(--slate); border-radius: var(--radius-md); padding: var(--space-3);">
+              <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--space-2);">
+                <span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">异步任务状态</span>
+                <span class="badge badge-gold">
+                  <i data-lucide="loader" style="width: 10px; height: 10px;" class="spin"></i>
+                  处理中
+                </span>
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted);">
+                任务 ID: <code style="background: var(--ash); padding: 2px 6px; border-radius: 4px;">kie_7f3a9b2c</code>
+              </div>
+              <div style="margin-top: 8px;">
+                <div style="height: 4px; background: var(--ash); border-radius: 2px; overflow: hidden;">
+                  <div style="width: 65%; height: 100%; background: linear-gradient(90deg, var(--aurora-gold), var(--aurora-amber)); animation: progress 1.5s ease-in-out infinite;"></div>
+                </div>
+              </div>
+              <div style="margin-top: 6px; font-size: 10px; color: var(--text-muted);">
+                轮询间隔: 1.5s · 已等待: 12s
+              </div>
+            </div>
+          </div>
+
+        </aside>
+
+        <!-- Generator Area -->
+        <div class="generator-area">
+          <div class="canvas-area">
+            <div class="canvas-header">
+              <div class="canvas-header-left">
+                <i data-lucide="image" class="canvas-header-icon" style="width: 16px; height: 16px;"></i>
+                <span class="canvas-header-title">生成结果</span>
+              </div>
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <span class="badge" style="background: rgba(96, 165, 250, 0.15); color: var(--info);">
+                  <i data-lucide="clock" style="width: 10px; height: 10px;"></i>
+                  异步 Jobs API
+                </span>
+                <span class="badge">Kie AI</span>
+              </div>
+            </div>
+            <div class="canvas-body">
+              <!-- Kie-specific loading state -->
+              <div style="background: var(--graphite); border: 1px solid var(--ash); border-radius: var(--radius-lg); padding: var(--space-4); margin-bottom: var(--space-4);">
+                <div style="display: flex; align-items: center; gap: var(--space-3);">
+                  <div style="width: 48px; height: 48px; background: rgba(247, 179, 43, 0.1); border-radius: var(--radius-md); display: flex; align-items: center; justify-content: center;">
+                    <i data-lucide="loader" style="width: 24px; height: 24px; color: var(--aurora-gold);" class="spin"></i>
+                  </div>
+                  <div>
+                    <div style="font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">正在生成图像...</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">Kie AI 使用异步任务，请稍候</div>
+                  </div>
+                  <button class="btn btn-secondary btn-sm" style="margin-left: auto;">
+                    <i data-lucide="x" style="width: 12px; height: 12px;"></i>
+                    取消
+                  </button>
+                </div>
+              </div>
+
+              <div class="image-grid">
+                <div class="image-card" onclick="showPreview()">
+                  <img src="https://picsum.photos/seed/kie1/400/400" alt="Generated">
+                  <div class="image-card-overlay">
+                    <div class="image-card-actions">
+                      <button class="btn btn-primary btn-sm" onclick="event.stopPropagation(); showEditor()">
+                        <i data-lucide="pen" style="width: 12px; height: 12px;"></i>
+                        编辑
+                      </button>
+                      <button class="btn btn-secondary btn-sm">
+                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                      </button>
+                    </div>
+                    <p class="image-card-prompt">Anime style character portrait...</p>
+                    <div class="image-card-meta">
+                      <span class="image-card-badge">Kie</span>
+                      <span class="image-card-badge">3:4</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Iteration Assistant -->
+        <aside class="assistant-panel">
+          <div class="assistant-resize"></div>
+          <div class="assistant-header">
+            <i data-lucide="message-circle" class="assistant-header-icon" style="width: 16px; height: 16px;"></i>
+            <span class="assistant-header-title">迭代助手</span>
+          </div>
+          <div class="assistant-messages">
+            <div class="assistant-empty">
+              <p class="assistant-empty-title">开始对话</p>
+              <p class="assistant-empty-desc">选择图片后，在这里描述修改需求</p>
+            </div>
+          </div>
+          <div class="assistant-input">
+            <input type="text" class="input" placeholder="输入你的需求...">
+            <button class="btn btn-primary assistant-send-btn">
+              <i data-lucide="send" style="width: 16px; height: 16px;"></i>
+            </button>
+          </div>
+        </aside>
+        </div><!-- end page-main-row -->
+
+        <!-- Prompt Area (Three Columns) -->
+        <div class="prompt-area">
+          <!-- Left: Optimizer -->
+          <div class="prompt-optimizer-col">
+            <div class="sidebar-header" style="margin-bottom: var(--space-3);">
+              <i data-lucide="wand-2" class="sidebar-header-icon" style="width: 16px; height: 16px;"></i>
+              <span class="sidebar-header-title">提示词优化器</span>
+            </div>
+            <div class="optimizer-section" style="background: transparent; padding: 0;">
+              <div class="optimizer-header">
+                <span class="optimizer-title">自动优化</span>
+                <div class="optimizer-toggle active"></div>
+              </div>
+              <div class="optimizer-content show">
+                <div class="optimizer-row">
+                  <select class="input select" style="font-size: 12px; padding: 6px 8px;">
+                    <option>通用优化模板</option>
+                  </select>
+                </div>
+                <div class="optimizer-row">
+                  <button class="btn btn-secondary btn-sm" style="flex: 1;">
+                    <i data-lucide="wand-2" style="width: 12px; height: 12px;"></i>
+                    手动优化
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Center: Prompt Input with Ref Images -->
+          <div class="prompt-input-col">
+            <label class="prompt-label">提示词</label>
+            <div class="prompt-input-inner">
+              <!-- Reference Images -->
+              <div class="ref-images-col">
+                <div class="ref-images-list"></div>
+                <button class="ref-add-thumb">
+                  <i data-lucide="image-plus" style="width: 16px; height: 16px;"></i>
+                  <span>添加</span>
+                </button>
+                <div class="ref-count-badge">0/8</div>
+              </div>
+              <!-- Textarea -->
+              <div class="prompt-textarea-wrapper">
+                <textarea class="input textarea" style="flex: 1; min-height: 80px; resize: none;" placeholder="描述你想要生成的图像...">Anime style character with flowing hair and magical aura</textarea>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Config & Generate -->
+          <div class="prompt-config-col">
+            <div class="params-grid">
+              <div class="param-group">
+                <label class="param-label">比例 <span style="color: var(--info); font-size: 9px;">(11种)</span></label>
+                <select class="input select param-select">
+                  <option>auto</option>
+                  <option>1:1</option>
+                  <option>2:3</option>
+                  <option>3:2</option>
+                  <option>4:3</option>
+                  <option>3:4</option>
+                  <option>4:5</option>
+                  <option>5:4</option>
+                  <option>9:16</option>
+                  <option>16:9</option>
+                  <option>21:9</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label class="param-label">尺寸</label>
+                <select class="input select param-select">
+                  <option>1K</option>
+                  <option>2K</option>
+                  <option>4K</option>
+                </select>
+              </div>
+              <div class="param-group">
+                <label class="param-label">格式</label>
+                <select class="input select param-select">
+                  <option>png</option>
+                  <option>jpg</option>
+                </select>
+              </div>
+            </div>
+            <div style="display: flex; gap: var(--space-2); align-items: flex-end;">
+              <div class="batch-toggle">
+                <label class="param-label">批量</label>
+                <button class="btn btn-secondary batch-toggle-btn">关</button>
+              </div>
+              <div style="flex: 1;">
+                <label class="param-label">数量</label>
+                <div class="count-buttons">
+                  <button class="count-btn active">1</button>
+                  <button class="count-btn">2</button>
+                  <button class="count-btn">3</button>
+                  <button class="count-btn">4</button>
+                </div>
+              </div>
+            </div>
+            <div class="generate-wrapper" style="margin-top: auto;">
+              <div style="font-size: 11px; color: var(--warning); display: flex; align-items: center; gap: 4px;">
+                <i data-lucide="clock" style="width: 12px; height: 12px;"></i>
+                异步任务 (约 10-30s)
+              </div>
+              <button class="btn btn-primary btn-lg generate-btn" style="width: 100%;">
+                <i data-lucide="bot" style="width: 18px; height: 18px;"></i>
+                生成
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Portfolio Page (Hidden by default) -->
+      <div class="page-container hidden" id="page-portfolio" style="flex-direction: column; overflow-y: auto;">
+        <div class="portfolio-header">
+          <div class="portfolio-title">
+            <i data-lucide="history" class="portfolio-title-icon" style="width: 24px; height: 24px;"></i>
+            <h2>作品历史</h2>
+            <span class="portfolio-count">(128 张)</span>
+          </div>
+          <div class="portfolio-controls">
+            <select class="input select" style="width: auto; font-size: 13px; padding: 8px 32px 8px 12px;">
+              <option>最新优先</option>
+              <option>最旧优先</option>
+            </select>
+            <div class="folder-indicator">
+              <i data-lucide="folder-open" class="folder-indicator-icon" style="width: 16px; height: 16px;"></i>
+              <span class="folder-indicator-name">~/Pictures/NanoBanana</span>
+              <button class="btn-icon btn-sm" style="width: 24px; height: 24px; margin-left: 4px;">
+                <i data-lucide="x" style="width: 12px; height: 12px;"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: var(--space-4);">
+          已启用"落盘存储"：新生成图片会优先保存原图到该目录，IndexedDB 仅保存缩略图与文件句柄。
+        </p>
+
+        <div class="portfolio-grid">
+          <div class="portfolio-card" onclick="showPreview()">
+            <div class="portfolio-card-image">
+              <img src="https://picsum.photos/seed/p1/300/300" alt="Portfolio">
+              <div class="portfolio-card-actions">
+                <button class="portfolio-action-btn" onclick="event.stopPropagation(); showEditor()">
+                  <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button class="portfolio-action-btn delete">
+                  <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                </button>
+              </div>
+            </div>
+            <div class="portfolio-card-info">
+              <p class="portfolio-card-prompt">A serene mountain landscape at golden hour...</p>
+              <div class="portfolio-card-meta">
+                <span>2024/01/15</span>
+                <span class="badge">1K</span>
+              </div>
+            </div>
+          </div>
+          <div class="portfolio-card" onclick="showPreview()">
+            <div class="portfolio-card-image">
+              <img src="https://picsum.photos/seed/p2/300/300" alt="Portfolio">
+              <div class="portfolio-card-actions">
+                <button class="portfolio-action-btn" onclick="event.stopPropagation(); showEditor()">
+                  <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button class="portfolio-action-btn delete">
+                  <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                </button>
+              </div>
+            </div>
+            <div class="portfolio-card-info">
+              <p class="portfolio-card-prompt">Abstract geometric patterns...</p>
+              <div class="portfolio-card-meta">
+                <span>2024/01/14</span>
+                <span class="badge">2K</span>
+              </div>
+            </div>
+          </div>
+          <div class="portfolio-card" onclick="showPreview()">
+            <div class="portfolio-card-image">
+              <img src="https://picsum.photos/seed/p3/300/300" alt="Portfolio">
+              <div class="portfolio-card-actions">
+                <button class="portfolio-action-btn" onclick="event.stopPropagation(); showEditor()">
+                  <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button class="portfolio-action-btn delete">
+                  <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                </button>
+              </div>
+            </div>
+            <div class="portfolio-card-info">
+              <p class="portfolio-card-prompt">Underwater coral reef scene...</p>
+              <div class="portfolio-card-meta">
+                <span>2024/01/13</span>
+                <span class="badge">4K</span>
+              </div>
+            </div>
+          </div>
+          <div class="portfolio-card" onclick="showPreview()">
+            <div class="portfolio-card-image">
+              <img src="https://picsum.photos/seed/p4/300/300" alt="Portfolio">
+              <div class="portfolio-card-actions">
+                <button class="portfolio-action-btn" onclick="event.stopPropagation(); showEditor()">
+                  <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button class="portfolio-action-btn delete">
+                  <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                </button>
+              </div>
+            </div>
+            <div class="portfolio-card-info">
+              <p class="portfolio-card-prompt">Minimalist architecture...</p>
+              <div class="portfolio-card-meta">
+                <span>2024/01/12</span>
+                <span class="badge">1K</span>
+              </div>
+            </div>
+          </div>
+          <div class="portfolio-card" onclick="showPreview()">
+            <div class="portfolio-card-image">
+              <img src="https://picsum.photos/seed/p5/300/300" alt="Portfolio">
+              <div class="portfolio-card-actions">
+                <button class="portfolio-action-btn" onclick="event.stopPropagation(); showEditor()">
+                  <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button class="portfolio-action-btn delete">
+                  <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                </button>
+              </div>
+            </div>
+            <div class="portfolio-card-info">
+              <p class="portfolio-card-prompt">Cyberpunk city at night...</p>
+              <div class="portfolio-card-meta">
+                <span>2024/01/11</span>
+                <span class="badge">2K</span>
+              </div>
+            </div>
+          </div>
+          <div class="portfolio-card" onclick="showPreview()">
+            <div class="portfolio-card-image">
+              <img src="https://picsum.photos/seed/p6/300/300" alt="Portfolio">
+              <div class="portfolio-card-actions">
+                <button class="portfolio-action-btn" onclick="event.stopPropagation(); showEditor()">
+                  <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+                </button>
+                <button class="portfolio-action-btn delete">
+                  <i data-lucide="trash-2" style="width: 14px; height: 14px;"></i>
+                </button>
+              </div>
+            </div>
+            <div class="portfolio-card-info">
+              <p class="portfolio-card-prompt">Fantasy forest with magical creatures...</p>
+              <div class="portfolio-card-meta">
+                <span>2024/01/10</span>
+                <span class="badge">1K</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <button class="load-more-btn">加载更多…（剩余 108 张）</button>
+      </div>
+    </main>
+
+    <!-- Editor Modal -->
+    <div class="editor-modal" id="editor-modal">
+      <div class="editor-header">
+        <div class="editor-header-left">
+          <i data-lucide="pen" class="editor-header-icon" style="width: 20px; height: 20px;"></i>
+          <span class="editor-header-title">编辑器</span>
+        </div>
+        <div class="editor-header-right">
+          <span class="badge">1K · 1:1</span>
+          <button class="btn-icon" onclick="hideEditor()">
+            <i data-lucide="x" style="width: 20px; height: 20px;"></i>
+          </button>
+        </div>
+      </div>
+      <div class="editor-canvas">
+        <img src="https://picsum.photos/seed/edit/800/800" alt="Editing">
+      </div>
+      <div class="editor-controls">
+        <div class="editor-tips">
+          <div class="editor-tip">
+            <strong>提示：</strong> 描述你想怎么改。例："把天空变成紫色"、"给猫戴一顶帽子"。
+          </div>
+          <div class="editor-tip" style="background: rgba(247, 179, 43, 0.1); border-color: rgba(247, 179, 43, 0.3);">
+            <strong style="color: var(--aurora-light);">上一次编辑：</strong> 让画面更温暖一些
+          </div>
+        </div>
+        <div class="editor-input-area">
+          <div class="editor-input-row">
+            <input type="text" class="input" placeholder="描述你的修改..." style="flex: 1;">
+            <button class="btn btn-primary">
+              发送
+              <i data-lucide="arrow-right" style="width: 16px; height: 16px;"></i>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="preview-modal" id="preview-modal">
+      <button class="btn-icon preview-close" onclick="hidePreview()">
+        <i data-lucide="x" style="width: 20px; height: 20px;"></i>
+      </button>
+      <button class="preview-nav prev">
+        <i data-lucide="chevron-left" style="width: 24px; height: 24px;"></i>
+      </button>
+      <button class="preview-nav next">
+        <i data-lucide="chevron-right" style="width: 24px; height: 24px;"></i>
+      </button>
+      <img src="https://picsum.photos/seed/preview/1200/1200" alt="Preview" class="preview-image">
+      <div class="preview-info">
+        <span class="preview-prompt">A beautiful sunset over mountains with golden light rays...</span>
+        <div class="preview-actions">
+          <button class="btn btn-primary btn-sm" onclick="hidePreview(); showEditor();">
+            <i data-lucide="pen" style="width: 14px; height: 14px;"></i>
+            编辑
+          </button>
+          <button class="btn btn-secondary btn-sm">
+            <i data-lucide="download" style="width: 14px; height: 14px;"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Initialize Lucide icons
+    lucide.createIcons();
+
+    // Page Navigation
+    const navLinks = document.querySelectorAll('.nav-link, .mobile-nav-item');
+    const pages = {
+      'gemini': document.getElementById('page-gemini'),
+      'proxy': document.getElementById('page-proxy'),
+      'ag': document.getElementById('page-ag'),
+      'kie': document.getElementById('page-kie'),
+      'portfolio': document.getElementById('page-portfolio')
+    };
+
+    navLinks.forEach(link => {
+      link.addEventListener('click', () => {
+        const page = link.dataset.page;
+
+        // Update active states
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll('.mobile-nav-item').forEach(l => l.classList.remove('active'));
+        document.querySelectorAll(`[data-page="${page}"]`).forEach(l => l.classList.add('active'));
+
+        // Show/hide pages
+        Object.values(pages).forEach(p => p.classList.add('hidden'));
+        pages[page].classList.remove('hidden');
+      });
+    });
+
+    // Optimizer Toggle
+    const optimizerToggle = document.getElementById('optimizer-toggle');
+    const optimizerContent = document.getElementById('optimizer-content');
+    optimizerToggle.addEventListener('click', () => {
+      optimizerToggle.classList.toggle('active');
+      optimizerContent.classList.toggle('show');
+    });
+
+    // Ref Images Popover
+    function toggleRefPopover() {
+      const popover = document.getElementById('ref-popover');
+      popover.style.display = popover.style.display === 'none' ? 'block' : 'none';
+    }
+
+    document.getElementById('ref-btn').addEventListener('click', toggleRefPopover);
+
+    // Close popover when clicking outside
+    document.addEventListener('click', (e) => {
+      const popover = document.getElementById('ref-popover');
+      const btn = document.getElementById('ref-btn');
+      if (!popover.contains(e.target) && !btn.contains(e.target)) {
+        popover.style.display = 'none';
+      }
+    });
+
+    // Editor Modal
+    function showEditor() {
+      document.getElementById('editor-modal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function hideEditor() {
+      document.getElementById('editor-modal').classList.remove('show');
+      document.body.style.overflow = '';
+    }
+
+    // Preview Modal
+    function showPreview() {
+      document.getElementById('preview-modal').classList.add('show');
+      document.body.style.overflow = 'hidden';
+    }
+
+    function hidePreview() {
+      document.getElementById('preview-modal').classList.remove('show');
+      document.body.style.overflow = '';
+    }
+
+    // ESC to close modals
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hideEditor();
+        hidePreview();
+      }
+    });
+
+    // Count buttons
+    document.querySelectorAll('.count-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.count-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>

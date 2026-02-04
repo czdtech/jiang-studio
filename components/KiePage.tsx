@@ -1,20 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon } from 'lucide-react';
-import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
+import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon, Wand2 } from 'lucide-react';
+import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchTask, BatchTaskStatus, BatchConfig } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
+import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
+import { RefImageRow } from './RefImageRow';
 import { SamplePromptChips } from './SamplePromptChips';
 import {
-  getGenerateButtonStyles,
-  getCountButtonStyles,
   getFavoriteButtonStyles,
   getRefImageButtonStyles,
   inputBaseStyles,
-  textareaBaseStyles,
   selectBaseStyles,
   selectSmallStyles,
 } from './uiStyles';
@@ -50,6 +49,11 @@ const createDefaultProvider = (): ProviderProfile => {
     updatedAt: now,
   };
 };
+
+const MAX_REF_IMAGES = 8;
+const MAX_BATCH_TOTAL = 32;
+const MAX_BATCH_CONCURRENCY = 8;
+const MAX_BATCH_COUNT_PER_PROMPT = 4;
 
 export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const { showToast } = useToast();
@@ -131,6 +135,19 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
 
+  // 模型列表
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsHint, setModelsHint] = useState<string>('');
+
+  // 批量任务状态
+  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
+  const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
+  const [batchModeEnabled, setBatchModeEnabled] = useState(false); // 手动开关：是否启用批量模式
+  const batchAbortRef = useRef(false);
+  const batchAbortControllerRef = useRef<AbortController | null>(null);
+  const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
+
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
 
@@ -186,6 +203,20 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     setSettings({ apiKey: activeProvider.apiKey, baseUrl: activeProvider.baseUrl });
     setProviderName(activeProvider.name);
     setProviderFavorite(!!activeProvider.favorite);
+
+    // 加载模型缓存
+    const cache = activeProvider.modelsCache;
+    if (cache?.all?.length) {
+      setAvailableModels(cache.all);
+      const dt = new Date(cache.fetchedAt).toLocaleString();
+      setModelsHint(`已缓存模型列表（${cache.all.length}） • ${dt}`);
+    } else if (cache?.lastError) {
+      setAvailableModels([]);
+      setModelsHint(cache.lastError);
+    } else {
+      setAvailableModels([]);
+      setModelsHint('');
+    }
 
     const loadDraft = async () => {
       const draft = await getDraftFromDb(scope, activeProvider.id);
@@ -319,6 +350,84 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   };
 
   const handleToggleFavorite = () => setProviderFavorite((v) => !v);
+
+  const handleRefreshModels = async () => {
+    if (!activeProvider) return;
+    if (!settings.baseUrl) {
+      showToast('请先填写 Base URL', 'error');
+      return;
+    }
+
+    setIsLoadingModels(true);
+    setModelsHint('');
+    try {
+      const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
+      const url = `${cleanBaseUrl}/v1/models`;
+
+      const headers: Record<string, string> = {};
+      if (settings.apiKey) {
+        headers.Authorization = `Bearer ${settings.apiKey}`;
+      }
+
+      const resp = await fetch(url, { method: 'GET', headers });
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`API error ${resp.status}: ${errText}`);
+      }
+
+      const json = (await resp.json()) as { data?: unknown[] };
+      const raw = Array.isArray(json.data) ? json.data : [];
+
+      const ids = raw
+        .map((m) => (m && typeof m === 'object' ? (m as { id?: unknown }).id : undefined))
+        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
+
+      const uniqueIds = Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
+      setAvailableModels(uniqueIds);
+
+      const modelsCache = {
+        all: uniqueIds,
+        fetchedAt: Date.now(),
+        lastError: undefined,
+      };
+
+      const updatedProvider: ProviderProfile = {
+        ...activeProvider,
+        apiKey: settings.apiKey,
+        baseUrl: settings.baseUrl,
+        modelsCache,
+        updatedAt: Date.now(),
+      };
+
+      await upsertProviderInDb(updatedProvider);
+      setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
+
+      setModelsHint(`已刷新模型列表（${uniqueIds.length}）`);
+      showToast('Models refreshed', 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unknown';
+      const hint = `无法从 /v1/models 拉取模型列表：${msg}`;
+      setModelsHint(hint);
+
+      const updatedProvider: ProviderProfile = {
+        ...activeProvider,
+        apiKey: settings.apiKey,
+        baseUrl: settings.baseUrl,
+        modelsCache: {
+          all: activeProvider.modelsCache?.all || [],
+          fetchedAt: activeProvider.modelsCache?.fetchedAt || Date.now(),
+          lastError: hint,
+        },
+        updatedAt: Date.now(),
+      };
+      await upsertProviderInDb(updatedProvider);
+      setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
+
+      showToast('Failed to refresh models: ' + msg, 'error');
+    } finally {
+      setIsLoadingModels(false);
+    }
+  };
 
   const handleOptimizePrompt = async () => {
     if (!prompt.trim()) return;
@@ -462,6 +571,268 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
   };
 
+  // 解析多行提示词为批量任务
+  const parsePromptsToBatch = (text: string): string[] => {
+    return text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+  };
+
+  // 批量模式下的任务数（用于 UI 显示）
+  const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
+  const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
+  const batchPromptCount = batchModeEnabled ? Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount) : 0;
+
+  const handleBatchGenerate = async () => {
+    if (generateLockRef.current) return;
+    if (isGenerating) return;
+
+    let prompts = parsePromptsToBatch(prompt);
+    if (prompts.length === 0) return;
+
+    const model = customModel.trim();
+    if (!model) {
+      showToast('请先填写模型名', 'error');
+      return;
+    }
+    if (!settings.baseUrl?.trim()) {
+      showToast('请先填写 Base URL', 'error');
+      return;
+    }
+    if (!settings.apiKey?.trim()) {
+      showToast('请先填写 API Key', 'error');
+      return;
+    }
+
+    const safeCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
+    const maxPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
+    if (prompts.length > maxPromptCount) {
+      prompts = prompts.slice(0, maxPromptCount);
+      showToast(`批量模式一次最多生成 ${MAX_BATCH_TOTAL} 张，已截取前 ${maxPromptCount} 条提示词`, 'info');
+    }
+
+    // 初始化批量任务
+    const tasks: BatchTask[] = prompts.map((p) => ({
+      id: crypto.randomUUID(),
+      prompt: p,
+      status: 'pending' as BatchTaskStatus,
+    }));
+
+    const controller = new AbortController();
+    batchAbortControllerRef.current = controller;
+    batchAbortRef.current = false;
+
+    setBatchTasks(tasks);
+    setIsBatchMode(true);
+    generateLockRef.current = true;
+    setIsGenerating(true);
+
+    // 批量模式用 images 渲染，不用 slots
+    setGeneratedImages([]);
+    setGeneratedSlots([]);
+
+    let successCount = 0;
+    const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
+
+    const runTask = async (task: BatchTask) => {
+      if (batchAbortRef.current || controller.signal.aborted) return;
+
+      setBatchTasks((prev) =>
+        prev.map((t) =>
+          t.id === task.id ? { ...t, status: 'running' as BatchTaskStatus, startedAt: Date.now() } : t
+        )
+      );
+
+      try {
+        // 自动优化提示词（如果启用）
+        let finalPrompt = task.prompt;
+        if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
+          try {
+            finalPrompt = await optimizeUserPrompt(task.prompt, optimizerConfig.templateId);
+          } catch {
+            // ignore
+          }
+        }
+
+        const currentParams: GenerationParams = {
+          ...params,
+          prompt: finalPrompt,
+          referenceImages: refImages,
+          count: safeCountPerPrompt,
+          model: model as ModelType,
+        };
+
+        const outcomes = await generateImages(currentParams, settings, { signal: controller.signal });
+
+        const successImages = outcomes
+          .filter((o): o is Extract<typeof outcomes[number], { ok: true }> => o.ok === true)
+          .map((o) => ({
+            ...o.image,
+            sourceScope: scope,
+            sourceProviderId: activeProviderId,
+          }));
+
+        const failErrors = outcomes
+          .filter((o): o is Extract<typeof outcomes[number], { ok: false }> => o.ok === false)
+          .map((o) => o.error)
+          .filter((s) => typeof s === 'string' && s.length > 0);
+
+        // 保存图片（成功的那部分）
+        for (const img of successImages) {
+          if (batchAbortRef.current || controller.signal.aborted) break;
+          await saveImage(img);
+        }
+
+        // 更新任务状态
+        if (successImages.length > 0) {
+          setBatchTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id
+                ? {
+                    ...t,
+                    status: 'success' as BatchTaskStatus,
+                    images: successImages,
+                    error: failErrors.length > 0 ? `部分失败：${failErrors[0]}` : undefined,
+                    completedAt: Date.now(),
+                  }
+                : t
+            )
+          );
+          setGeneratedImages((prev) => [...prev, ...successImages]);
+          successCount++;
+          return;
+        }
+
+        const aborted =
+          controller.signal.aborted ||
+          batchAbortRef.current ||
+          (failErrors.length > 0 && failErrors.every((e) => e === '已停止'));
+
+        setBatchTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id
+              ? {
+                  ...t,
+                  status: 'error' as BatchTaskStatus,
+                  error: aborted ? '已取消' : (failErrors[0] || '生成失败'),
+                  completedAt: Date.now(),
+                }
+              : t
+          )
+        );
+      } catch (e) {
+        const aborted = (e as any)?.name === 'AbortError' || controller.signal.aborted;
+        if (aborted) {
+          setBatchTasks((prev) =>
+            prev.map((t) =>
+              t.id === task.id
+                ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: Date.now() }
+                : t
+            )
+          );
+          return;
+        }
+
+        setBatchTasks((prev) =>
+          prev.map((t) =>
+            t.id === task.id
+              ? {
+                  ...t,
+                  status: 'error' as BatchTaskStatus,
+                  error: e instanceof Error ? e.message : '生成失败',
+                  completedAt: Date.now(),
+                }
+              : t
+          )
+        );
+      }
+    };
+
+    const executeWithConcurrency = async () => {
+      const queue = [...tasks];
+      const running = new Set<Promise<void>>();
+
+      while (queue.length > 0 || running.size > 0) {
+        if (batchAbortRef.current || controller.signal.aborted) {
+          await Promise.allSettled(Array.from(running));
+          break;
+        }
+
+        while (running.size < safeConcurrency && queue.length > 0) {
+          const task = queue.shift()!;
+          let p: Promise<void>;
+          p = runTask(task).finally(() => running.delete(p));
+          running.add(p);
+        }
+
+        if (running.size > 0) {
+          await Promise.race(Array.from(running));
+        }
+      }
+    };
+
+    try {
+      await executeWithConcurrency();
+    } finally {
+      generateLockRef.current = false;
+      setIsGenerating(false);
+      batchAbortControllerRef.current = null;
+
+      if (batchAbortRef.current || controller.signal.aborted) {
+        const now = Date.now();
+        setBatchTasks((prev) =>
+          prev.map((t) =>
+            t.status === 'pending'
+              ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
+              : t
+          )
+        );
+        showToast('批量生成已停止', 'info');
+      } else {
+        showToast(`批量完成：${successCount}/${tasks.length} 成功`, successCount === tasks.length ? 'success' : 'info');
+      }
+    }
+  };
+
+  const handleBatchStop = () => {
+    if (!isGenerating) return;
+    batchAbortRef.current = true;
+    try {
+      batchAbortControllerRef.current?.abort();
+    } catch {
+      // ignore
+    }
+    const now = Date.now();
+    setBatchTasks((prev) =>
+      prev.map((t) =>
+        t.status === 'pending'
+          ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
+          : t
+      )
+    );
+  };
+
+  const handleClearBatch = () => {
+    setBatchTasks([]);
+    setIsBatchMode(false);
+    setGeneratedImages([]);
+    setGeneratedSlots([]);
+  };
+
+  const handleBatchDownloadAll = async () => {
+    if (isGenerating) return;
+    const images = batchTasks.flatMap((t) => t.images || []);
+    if (images.length === 0) return;
+
+    try {
+      const n = await downloadImagesSequentially(images, { delayMs: 140 });
+      showToast(`已开始下载 ${n} 张`, 'success');
+    } catch (e) {
+      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    }
+  };
+
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
@@ -478,7 +849,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
         if (typeof reader.result === 'string') newImages.push(reader.result);
         processedCount++;
         if (processedCount === files.length) {
-          setRefImages((prev) => [...prev, ...newImages].slice(0, 8));
+          setRefImages((prev) => [...prev, ...newImages].slice(0, MAX_REF_IMAGES));
         }
       };
       reader.readAsDataURL(file);
@@ -507,19 +878,19 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   ];
 
   return (
-    <div className="h-full flex flex-col">
-      {/* 上区：左侧配置 + 右侧图片展示 */}
-      <div className="flex-1 min-h-0 p-4 flex flex-col md:flex-row gap-4">
-        {/* 左侧：API 配置 */}
-        <div className="w-full md:w-[280px] md:shrink-0 max-h-[40vh] md:max-h-none border border-dark-border rounded-xl bg-dark-surface/80 backdrop-blur-sm p-4 space-y-4 overflow-y-auto">
-          <div className="flex items-center gap-1.5">
+    <div className="aurora-page">
+      {/* ========== 主行：侧边栏 + 画布 + 迭代助手 ========== */}
+      <div className="aurora-main-row">
+        {/* 左侧边栏：API 配置 */}
+        <aside className="aurora-sidebar space-y-4">
+          <div className="aurora-section-header">
             <Plug className="w-4 h-4 text-banana-500" />
-            <span className="text-sm font-medium text-white">Kie AI 设置</span>
+            <span className="aurora-section-title">Kie AI 设置</span>
           </div>
 
           {/* 供应商选择 */}
           <div className="space-y-2">
-            <label className="text-xs text-gray-500">供应商</label>
+            <label className="text-xs text-text-muted">供应商</label>
             <select
               value={activeProviderId}
               onChange={(e) => void handleSelectProvider(e.target.value)}
@@ -535,7 +906,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               <button
                 type="button"
                 onClick={() => void handleCreateProvider()}
-                className="flex-1 h-8 flex items-center justify-center gap-1 rounded-lg border border-dark-border bg-dark-bg text-gray-400 hover:text-white hover:border-gray-600 transition-colors text-xs"
+                className="flex-1 h-8 flex items-center justify-center gap-1 rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary hover:border-smoke transition-colors text-xs"
                 title="新增供应商"
               >
                 <Plus className="w-3.5 h-3.5" />
@@ -553,7 +924,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               <button
                 type="button"
                 onClick={() => void handleDeleteProvider()}
-                className="h-8 w-8 flex items-center justify-center rounded-lg border border-dark-border bg-dark-bg text-gray-400 hover:text-red-400 hover:border-red-500/50 transition-colors"
+                className="h-8 w-8 flex items-center justify-center rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-error hover:border-error/50 transition-colors"
                 title="删除供应商"
                 aria-label="删除供应商"
               >
@@ -563,36 +934,146 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           </div>
 
           {/* API Key */}
-          <div className="space-y-2">
-            <label className="text-xs text-gray-500">API Key</label>
+          <form className="space-y-2" onSubmit={(e) => e.preventDefault()} autoComplete="off">
+            <label className="text-xs text-text-muted">API Key</label>
             <input
               type="password"
               value={settings.apiKey}
               onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
               placeholder="API Key"
               className={inputBaseStyles}
+              autoComplete="off"
             />
             {!settings.apiKey.trim() && (
-              <p className="text-xs text-yellow-500/80">未填写 API Key，生成/增强将不可用。</p>
+              <p className="text-xs text-warning/80">未填写 API Key，生成/增强将不可用。</p>
             )}
-          </div>
+          </form>
 
           {/* Base URL */}
           <div className="space-y-2">
-            <label className="text-xs text-gray-500">Base URL</label>
-            <input
-              type="text"
-              value={settings.baseUrl}
-              onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
-              placeholder="https://api.kie.ai"
-              className={inputBaseStyles}
-            />
+            <label className="text-xs text-text-muted">Base URL</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={settings.baseUrl}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setSettings((prev) => ({ ...prev, baseUrl: next }));
+                  setAvailableModels([]);
+                  setModelsHint('');
+                }}
+                placeholder="https://api.kie.ai"
+                className={`flex-1 ${inputBaseStyles}`}
+              />
+              <button
+                onClick={() => void handleRefreshModels()}
+                disabled={isLoadingModels || !settings.baseUrl}
+                className="h-9 px-2.5 text-xs rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors"
+                title={modelsHint || '刷新模型列表'}
+              >
+                {isLoadingModels ? '...' : '刷新'}
+              </button>
+            </div>
             {!settings.baseUrl.trim() && (
-              <p className="text-xs text-yellow-500/80">未填写 Base URL，生成/增强将不可用。</p>
+              <p className="text-xs text-warning/80">未填写 Base URL，生成/增强将不可用。</p>
             )}
           </div>
+        </aside>
 
-          {/* Prompt 优化器配置（内联） */}
+        {/* 中间画布：图片展示 */}
+        <div className="aurora-canvas">
+          <div className="aurora-canvas-header">
+            <div className="flex items-center gap-2">
+              <ImageIcon className="w-4 h-4 text-banana-500" />
+              <span className="aurora-section-title">生成结果</span>
+            </div>
+            <span className="aurora-badge aurora-badge-gold">Kie AI</span>
+          </div>
+          <div className="aurora-canvas-body">
+            {/* 批量模式进度条 */}
+            {isBatchMode && batchTasks.length > 0 && (
+              <div className="aurora-batch-progress">
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <span className="text-sm text-text-secondary">
+                    批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-2 text-xs">
+                      <span className="text-success">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
+                      <span className="text-error">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
+                      <span className="text-text-muted">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
+                    </div>
+                    {isGenerating && (
+                      <button
+                        type="button"
+                        onClick={handleBatchStop}
+                        className="h-7 px-2 rounded-[var(--radius-md)] border border-error/40 bg-error/10 text-error hover:bg-error/20 transition-colors text-xs"
+                      >
+                        取消
+                      </button>
+                    )}
+                    {!isGenerating &&
+                      batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
+                      batchTasks.some(t => (t.images?.length || 0) > 0) && (
+                        <button
+                          type="button"
+                          onClick={() => void handleBatchDownloadAll()}
+                          className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
+                        >
+                          下载全部
+                        </button>
+                      )}
+                  </div>
+                </div>
+                <div className="aurora-batch-items">
+                  {batchTasks.map((task, idx) => (
+                    <div
+                      key={task.id}
+                      className={`aurora-batch-item ${
+                        task.status === 'success' ? 'success' :
+                        task.status === 'error' ? 'error' :
+                        task.status === 'running' ? 'running' :
+                        'pending'
+                      }`}
+                      title={task.prompt}
+                    >
+                      {idx + 1}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <ImageGrid
+              images={generatedImages}
+              slots={isBatchMode ? undefined : generatedSlots}
+              isGenerating={isGenerating}
+              params={params}
+              expectedCount={isBatchMode ? batchPromptCount * safePreviewCountPerPrompt : undefined}
+              onImageClick={onImageClick}
+              onEdit={onEdit}
+            />
+          </div>
+        </div>
+
+        {/* 右侧迭代助手（≥1200px 才显示） */}
+        <aside className="aurora-assistant">
+          <IterationAssistant
+            currentPrompt={prompt}
+            onUseVersion={setPrompt}
+            iterateTemplateId={optimizerConfig?.iterateTemplateId}
+            onTemplateChange={handleIterateTemplateChange}
+          />
+        </aside>
+      </div>
+
+      {/* ========== 底部提示词区：优化器 + 输入 + 配置 ========== */}
+      <div className="aurora-prompt-area">
+        {/* 左列：提示词优化器 */}
+        <div className="aurora-prompt-optimizer">
+          <div className="aurora-section-header">
+            <Wand2 className="w-4 h-4 text-banana-500" />
+            <span className="aurora-section-title">提示词优化器</span>
+          </div>
           <PromptOptimizerSettings
             onConfigChange={handleOptimizerConfigChange}
             currentPrompt={prompt}
@@ -601,193 +1082,286 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           />
         </div>
 
-        {/* 中间：图片展示 */}
-        <div className="flex-1 min-w-0 overflow-auto">
-          <ImageGrid
-            images={generatedImages}
-            slots={generatedSlots}
-            isGenerating={isGenerating}
-            params={params}
-            onImageClick={onImageClick}
-            onEdit={onEdit}
+        {/* 中列：提示词输入 */}
+        <div className="aurora-prompt-input">
+          <RefImageRow
+            images={refImages}
+            maxImages={MAX_REF_IMAGES}
+            onFileUpload={handleFileUpload}
+            onRemove={removeRefImage}
           />
-        </div>
 
-        {/* 右侧：迭代助手 */}
-        <IterationAssistant
-          currentPrompt={prompt}
-          onUseVersion={setPrompt}
-          iterateTemplateId={optimizerConfig?.iterateTemplateId}
-          onTemplateChange={handleIterateTemplateChange}
-        />
-      </div>
-
-      {/* 下区：Prompt + 参数 + 生成（全宽） */}
-      <div className="shrink-0 px-4 pb-4">
-        <div className="border border-dark-border rounded-xl bg-dark-surface/80 backdrop-blur-sm p-4">
-          <div className="flex flex-col lg:flex-row items-stretch gap-4 w-full overflow-hidden">
-            {/* Prompt */}
-            <div className="flex-1 min-w-0 flex flex-col">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-sm text-gray-500">提示词</span>
-              </div>
+          <div className="aurora-textarea-wrapper flex-1">
+            <div className="aurora-prompt-box">
+              <Sparkles className="aurora-prompt-box-icon" />
               <textarea
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="描述你的想法…"
-                className={textareaBaseStyles}
+                placeholder="描述你想要的画面..."
+                className="aurora-prompt-box-textarea"
               />
-              {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
             </div>
+            {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
+          </div>
 
-            {/* 参数区 */}
-            <div className="w-full lg:w-[320px] lg:shrink-0 flex flex-col gap-2">
-              {/* Model + Ratio + Size */}
-              <div className="grid grid-cols-[minmax(0,1fr)_76px_76px] gap-2">
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">模型</label>
-                  <input
-                    type="text"
-                    value={customModel}
-                    onChange={(e) => setCustomModel(e.target.value)}
-                    placeholder="nano-banana-pro"
-                    className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 text-white outline-none focus:ring-1 focus:ring-banana-500 placeholder-gray-600"
-                  />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">比例</label>
-                  <div className="relative">
-                    <select
-                      value={params.aspectRatio}
-                      onChange={(e) => setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))}
-                      className={selectSmallStyles}
-                    >
-                      {aspectRatioOptions.map((opt) => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
-                  </div>
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">尺寸</label>
-                  <div className="relative">
-                    <select
-                      value={params.imageSize}
-                      onChange={(e) => setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))}
-                      className={selectSmallStyles}
-                    >
-                      <option value="1K">1K</option>
-                      <option value="2K">2K</option>
-                      <option value="4K">4K</option>
-                    </select>
-                    <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
-                  </div>
-                </div>
-              </div>
-
-              {/* Output + Count + 参考图 */}
-              <div className="flex items-center gap-2">
-                <div className="w-16">
-                  <label className="text-xs text-gray-500 mb-1 block">格式</label>
-                  <div className="relative">
-                    <select
-                      value={params.outputFormat || 'png'}
-                      onChange={(e) => setParams((prev) => ({ ...prev, outputFormat: e.target.value as NonNullable<GenerationParams['outputFormat']> }))}
-                      className="w-full h-8 text-xs bg-dark-bg border border-dark-border rounded-lg px-2 pr-5 text-white outline-none focus:ring-1 focus:ring-banana-500 cursor-pointer appearance-none"
-                    >
-                      <option value="png">png</option>
-                      <option value="jpg">jpg</option>
-                    </select>
-                    <ChevronDown className="absolute right-1 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-500 pointer-events-none" />
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <label className="text-xs text-gray-500 mb-1 block">数量</label>
-                  <div className="grid grid-cols-4 gap-1">
-                    {[1, 2, 3, 4].map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => setParams((prev) => ({ ...prev, count: n }))}
-                        className={getCountButtonStyles(params.count === n)}
-                      >
-                        {n}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {/* 参考图按钮 */}
-                <div className="relative">
-                  <label className="text-xs text-gray-500 mb-1 block">参考图</label>
+          {/* 小屏参考图按钮 */}
+          <div className="lg:hidden relative">
+            <button
+              onClick={() => setShowRefPopover(!showRefPopover)}
+              className={getRefImageButtonStyles(refImages.length > 0)}
+            >
+              <ImageIcon className="w-3.5 h-3.5" />
+              <span className="text-xs">参考图 {refImages.length}/{MAX_REF_IMAGES}</span>
+            </button>
+            {showRefPopover && (
+              <div className="absolute bottom-full left-0 mb-2 w-64 bg-graphite border border-ash rounded-[var(--radius-md)] p-3 shadow-[var(--shadow-floating)] z-10">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-text-muted">参考图 ({refImages.length}/{MAX_REF_IMAGES})</span>
                   <button
-                    onClick={() => setShowRefPopover(!showRefPopover)}
-                    className={getRefImageButtonStyles(refImages.length > 0)}
+                    type="button"
+                    aria-label="关闭参考图"
+                    onClick={() => setShowRefPopover(false)}
+                    className="text-text-muted hover:text-text-primary"
                   >
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    <span className="text-xs">{refImages.length}/8</span>
+                    <X className="w-3.5 h-3.5" />
                   </button>
-                  {/* 参考图弹出层 */}
-                  {showRefPopover && (
-                    <div className="absolute bottom-full right-0 mb-2 w-64 bg-dark-surface border border-dark-border rounded-lg p-3 shadow-xl z-10">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs text-gray-400">参考图 ({refImages.length}/8)</span>
+                </div>
+                {refImages.length > 0 && (
+                  <div className="grid grid-cols-4 gap-1.5 mb-2">
+                    {refImages.map((img, idx) => (
+                      <div key={idx} className="relative aspect-square rounded-[var(--radius-md)] overflow-hidden border border-ash group">
+                        <img src={img} alt={`Ref ${idx}`} className="w-full h-full object-cover" />
                         <button
-                          type="button"
-                          aria-label="关闭参考图"
-                          onClick={() => setShowRefPopover(false)}
-                          className="text-gray-500 hover:text-white"
+                          onClick={() => removeRefImage(idx)}
+                          aria-label="移除参考图"
+                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
                         >
-                          <X className="w-3.5 h-3.5" />
+                          <X className="w-3 h-3 text-white" />
                         </button>
                       </div>
-                      {refImages.length > 0 && (
-                        <div className="grid grid-cols-4 gap-1.5 mb-2">
-                          {refImages.map((img, idx) => (
-                            <div key={idx} className="relative aspect-square rounded-lg overflow-hidden border border-dark-border group">
-                              <img src={img} alt={`Ref ${idx}`} className="w-full h-full object-cover" />
-                              <button
-                                onClick={() => removeRefImage(idx)}
-                                aria-label="移除参考图"
-                                className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                              >
-                                <X className="w-3 h-3 text-white" />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <label className="flex items-center justify-center h-8 text-xs text-gray-400 hover:text-white border border-dashed border-dark-border hover:border-banana-500/50 rounded-lg cursor-pointer transition-colors">
-                        <Plus className="w-3.5 h-3.5 mr-1" />
-                        添加参考图
-                        <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-                      </label>
-                    </div>
-                  )}
+                    ))}
+                  </div>
+                )}
+                <label className="flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  添加参考图
+                  <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                </label>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 右列：参数配置（outputFormat 保留在此） */}
+        <div className="aurora-prompt-config">
+          {/* 模型 */}
+          <div>
+            <label className="text-xs text-text-muted mb-1 block">模型</label>
+            <div className="relative">
+              <input
+                type="text"
+                list="kie-models-list"
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="nano-banana-pro"
+                className={`${inputBaseStyles} pr-8`}
+              />
+              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
+              {availableModels.length > 0 && (
+                <datalist id="kie-models-list">
+                  {availableModels.map((id) => (
+                    <option key={id} value={id} />
+                  ))}
+                </datalist>
+              )}
+            </div>
+          </div>
+
+          {/* 比例 + 尺寸 */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">比例</label>
+              <div className="relative">
+                <select
+                  value={params.aspectRatio}
+                  onChange={(e) => setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))}
+                  className={selectSmallStyles}
+                >
+                  {aspectRatioOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">尺寸</label>
+              <div className="relative">
+                <select
+                  value={params.imageSize}
+                  onChange={(e) => setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))}
+                  className={selectSmallStyles}
+                >
+                  <option value="1K">1K</option>
+                  <option value="2K">2K</option>
+                  <option value="4K">4K</option>
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* 输出格式 */}
+          <div>
+            <label className="text-xs text-text-muted mb-1 block">格式</label>
+            <div className="relative">
+              <select
+                value={params.outputFormat || 'png'}
+                onChange={(e) => setParams((prev) => ({ ...prev, outputFormat: e.target.value as NonNullable<GenerationParams['outputFormat']> }))}
+                className={selectSmallStyles}
+              >
+                <option value="png">png</option>
+                <option value="jpg">jpg</option>
+              </select>
+              <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+            </div>
+          </div>
+
+          {/* 模式切换 (分段控制器) */}
+          <div className="mb-3">
+            <label className="text-xs text-text-muted mb-2 block font-medium">生成模式</label>
+            <div className="bg-slate border border-ash rounded-[var(--radius-md)] p-1 flex relative">
+              <button
+                type="button"
+                onClick={() => setBatchModeEnabled(false)}
+                disabled={isGenerating}
+                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
+                  !batchModeEnabled
+                    ? 'text-obsidian'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
+                } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                普通生成
+              </button>
+              <button
+                type="button"
+                onClick={() => setBatchModeEnabled(true)}
+                disabled={isGenerating}
+                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
+                  batchModeEnabled
+                    ? 'text-obsidian'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
+                } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
+              >
+                批量任务
+              </button>
+              <div
+                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-banana-500 rounded-[var(--radius-sm)] shadow-[var(--shadow-lifted)] transition-all duration-300 ease-spring ${
+                  batchModeEnabled ? 'left-[calc(50%+2px)]' : 'left-1'
+                }`}
+              />
+            </div>
+          </div>
+
+          {/* 模式内容区 */}
+          {batchModeEnabled ? (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">并发数</label>
+                <div className="relative">
+                  <select
+                    value={batchConfig.concurrency}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                      setBatchConfig((prev) => ({ ...prev, concurrency: v }));
+                    }}
+                    className={selectSmallStyles}
+                    disabled={isGenerating}
+                  >
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">每提示词</label>
+                <div className="relative">
+                  <select
+                    value={batchConfig.countPerPrompt}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                      setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
+                    }}
+                    className={selectSmallStyles}
+                    disabled={isGenerating}
+                  >
+                    {[1, 2, 3, 4].map((n) => (
+                      <option key={n} value={n}>{n}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
                 </div>
               </div>
             </div>
-
-            {/* 生成按钮 */}
-            <div className="w-full lg:w-[100px] lg:shrink-0 flex items-center">
-              <button
-                onClick={isGenerating ? handleStop : handleGenerate}
-                disabled={!isGenerating && !canGenerate}
-                className={getGenerateButtonStyles(canGenerate, isGenerating)}
-              >
-                {isGenerating ? (
-                  <>
-                    <RefreshCw className="w-5 h-5 animate-spin" />
-                    <span className="text-xs">停止</span>
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-5 h-5" />
-                    <span className="text-sm">生成</span>
-                    <span className="text-xs opacity-70">×{params.count}</span>
-                  </>
-                )}
-              </button>
+          ) : (
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">生成数量</label>
+              <div className="aurora-count-buttons">
+                {[1, 2, 3, 4].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setParams((prev) => ({ ...prev, count: n }))}
+                    className={`aurora-count-btn ${params.count === n ? 'active' : ''}`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
             </div>
+          )}
+
+          {/* 生成按钮 */}
+          <div className="mt-auto space-y-1">
+            {batchModeEnabled && batchPromptCount > 0 && (
+              <span className="text-xs text-banana-500 text-center block">
+                批量模式：{batchPromptCount} 个任务
+              </span>
+            )}
+            <button
+              onClick={isGenerating ? (batchModeEnabled ? handleBatchStop : handleStop) : (batchModeEnabled ? handleBatchGenerate : handleGenerate)}
+              disabled={!isGenerating && !canGenerate}
+              className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
+            >
+              {isGenerating ? (
+                <>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  <span>停止</span>
+                </>
+              ) : batchModeEnabled ? (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  <span>批量生成</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5" />
+                  <span>生成 ×{params.count}</span>
+                </>
+              )}
+            </button>
+            {isBatchMode && batchTasks.length > 0 && !isGenerating && (
+              <button
+                onClick={handleClearBatch}
+                className="w-full h-6 text-xs text-text-muted hover:text-text-primary transition-colors"
+              >
+                清除队列
+              </button>
+            )}
           </div>
         </div>
       </div>

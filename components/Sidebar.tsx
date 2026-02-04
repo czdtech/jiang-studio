@@ -30,10 +30,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {
         <div className="w-full max-w-7xl mx-auto px-4 flex items-center gap-6">
           {/* Logo */}
           <div className="flex items-center gap-2 shrink-0">
-            <div className="w-8 h-8 bg-gradient-to-br from-banana-400 to-banana-600 rounded-lg flex items-center justify-center">
-              <Sparkles className="text-black w-4 h-4" />
+            <div className="w-8 h-8 bg-gradient-to-br from-banana-500 to-banana-600 rounded-[10px] flex items-center justify-center shadow-[var(--shadow-glow)]">
+              <Sparkles className="text-obsidian w-4 h-4" />
             </div>
-            <span className="text-white font-bold text-sm">Nano Bababa</span>
+            <span className="text-text-primary font-bold text-sm">Nano Banana</span>
           </div>
 
           {/* 导航项 */}

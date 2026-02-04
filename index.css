@@ -1,44 +1,99 @@
 @import "tailwindcss";
 
-/* Professional Font Pairing: Poppins (headings) + Inter (body) */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Poppins:wght@400;500;600;700&display=swap');
+/* Aurora Design System Font Pairing: Plus Jakarta Sans (headings) + Inter (body) + JetBrains Mono (code) */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* Custom Theme - Enhanced Contrast for Daytime Visibility */
+/* Aurora Design System - Nano Banana Studio */
 @theme {
+  /* Aurora 主色调 */
   --color-banana-50: #fffaeb;
   --color-banana-100: #fff3c7;
   --color-banana-200: #ffe68f;
-  --color-banana-300: #ffd24c;
+  --color-banana-300: #FFD975;   /* Aurora Light */
   --color-banana-400: #ffbd1a;
-  --color-banana-500: #f59e0b;
-  --color-banana-600: #d97706;
+  --color-banana-500: #F7B32B;   /* Aurora Gold - 品牌主色 */
+  --color-banana-600: #E09915;   /* Aurora Amber - 悬停态 */
   --color-banana-700: #b45309;
   --color-banana-800: #92400e;
   --color-banana-900: #78350f;
 
-  /* Enhanced dark theme - improved contrast for daylight visibility */
-  --color-dark-bg: #09090b;           /* Deeper background for better layering */
-  --color-dark-surface: #1c1c20;      /* Brighter surface for clear separation */
-  --color-dark-border: #3f3f46;       /* Much brighter border - visible in daylight */
-  --color-dark-border-subtle: #27272a; /* Subtle border for less prominent elements */
-  --color-dark-border-strong: #52525b; /* Strong border for emphasis/hover states */
+  /* Aurora 6级深色背景系统 */
+  --color-dark-bg: #08090A;           /* Void - 最深背景（画布区） */
+  --color-dark-surface: #16181C;      /* Graphite - 卡片/面板背景 */
+  --color-dark-border: #2A2D38;       /* Ash - 边框/分隔线 */
+  --color-dark-border-subtle: #1E2028; /* Slate - 输入框/次级面板 */
+  --color-dark-border-strong: #3D4150; /* Smoke - 悬停边框 */
+
+  /* Aurora 扩展背景层级 */
+  --color-void: #08090A;
+  --color-obsidian: #0D0E10;
+  --color-graphite: #16181C;
+  --color-slate: #1E2028;
+  --color-ash: #2A2D38;
+  --color-smoke: #3D4150;
+
+  /* Aurora 文字层级 */
+  --color-text-primary: #F4F5F7;
+  --color-text-secondary: #B8BCC8;
+  --color-text-muted: #6B7085;
+  --color-text-disabled: #404559;
+
+  /* Aurora 语义色彩 */
+  --color-success: #34D399;
+  --color-warning: #FBBF24;
+  --color-error: #F87171;
+  --color-info: #60A5FA;
+
+  /* Aurora 阴影系统 */
+  --shadow-lifted: 0 2px 8px rgba(0, 0, 0, 0.25);
+  --shadow-floating: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 0 20px rgba(247, 179, 43, 0.25);
+  --shadow-inset: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+
+  /* Aurora 圆角系统 */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+  --radius-full: 9999px;
+
+  /* Aurora 动效时间 */
+  --duration-micro: 100ms;
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-smooth: 300ms;
+  --duration-slow: 400ms;
+  
+  /* Aurora Easing */
+  --ease-spring: cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.ease-spring {
+  transition-timing-function: var(--ease-spring);
 }
 
 body {
   background-color: var(--color-dark-bg);
-  color: #f4f4f5;  /* Brighter text for better readability */
+  color: var(--color-text-primary);
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
 h1, h2, h3, h4, h5, h6 {
-  font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 }
 
-/* Accessibility: Visible focus for keyboard users */
+/* Aurora Selection */
+::selection {
+  background: rgba(247, 179, 43, 0.3);
+  color: var(--color-text-primary);
+}
+
+/* Accessibility: Visible focus for keyboard users - Aurora Gold */
 button:focus-visible,
 a:focus-visible,
 [role="button"]:focus-visible {
-  outline: 2px solid rgba(245, 158, 11, 0.85);
+  outline: 2px solid rgba(247, 179, 43, 0.85);
   outline-offset: 2px;
 }
 
@@ -85,4 +140,572 @@ a:focus-visible,
 
 .animate-slide-in {
   animation: slide-in 0.3s ease-out;
+}
+
+/* ========================================
+   Aurora Three-Column Aligned Layout
+   ======================================== */
+
+/* Page container - column layout */
+.aurora-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+/* Main row - three columns */
+.aurora-main-row {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .aurora-main-row {
+    flex-direction: row;
+  }
+}
+
+/* Sidebar column */
+.aurora-sidebar {
+  width: 100%;
+  max-height: 40vh;
+  overflow-y: auto;
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+}
+
+@media (min-width: 768px) {
+  .aurora-sidebar {
+    width: 280px;
+    max-height: none;
+    flex-shrink: 0;
+  }
+}
+
+/* Canvas area - main content */
+.aurora-canvas {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-void);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+}
+
+.aurora-canvas-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--color-ash);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--color-graphite);
+  flex-shrink: 0;
+}
+
+.aurora-canvas-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Assistant panel */
+.aurora-assistant {
+  display: none;
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  flex-direction: column;
+}
+
+@media (min-width: 1200px) {
+  .aurora-assistant {
+    display: flex;
+  }
+}
+
+/* ========================================
+   Prompt Area - Three Columns Aligned
+   ======================================== */
+.aurora-prompt-area {
+  display: flex;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+/* Left: Optimizer column (aligned with sidebar) */
+.aurora-prompt-optimizer {
+  display: none;
+  width: 280px;
+  flex-shrink: 0;
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+}
+
+@media (min-width: 768px) {
+  .aurora-prompt-optimizer {
+    display: block;
+  }
+}
+
+/* Center: Input column (aligned with canvas) */
+.aurora-prompt-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Reference images row (above textarea, left aligned) */
+.aurora-ref-row {
+  display: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  justify-content: flex-start; /* 左对齐 */
+}
+
+@media (min-width: 1024px) {
+  .aurora-ref-row {
+    display: flex;
+  }
+}
+
+.aurora-ref-list {
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 4px; /* 为滚动条留空间 */
+}
+
+/* 横向滚动条样式 */
+.aurora-ref-list::-webkit-scrollbar {
+  height: 4px;
+}
+
+.aurora-ref-list::-webkit-scrollbar-track {
+  background: var(--color-slate);
+  border-radius: 2px;
+}
+
+.aurora-ref-list::-webkit-scrollbar-thumb {
+  background: var(--color-ash);
+  border-radius: 2px;
+}
+
+.aurora-ref-list::-webkit-scrollbar-thumb:hover {
+  background: var(--color-smoke);
+}
+
+.aurora-ref-thumb {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 2px solid var(--color-ash);
+  transition: all 200ms cubic-bezier(0.33, 1, 0.68, 1);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.aurora-ref-thumb:hover {
+  border-color: var(--color-banana-500);
+  transform: scale(1.05);
+}
+
+.aurora-ref-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.aurora-ref-thumb .aurora-ref-remove {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 16px;
+  height: 16px;
+  background: rgba(0, 0, 0, 0.7);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms;
+}
+
+.aurora-ref-thumb:hover .aurora-ref-remove {
+  opacity: 1;
+}
+
+.aurora-ref-add {
+  width: 56px;
+  height: 56px;
+  border: 2px dashed var(--color-ash);
+  border-radius: var(--radius-md);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  color: var(--color-text-muted);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 200ms cubic-bezier(0.33, 1, 0.68, 1);
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.aurora-ref-add:hover {
+  border-color: var(--color-banana-500);
+  color: var(--color-banana-500);
+  background: rgba(247, 179, 43, 0.05);
+}
+
+.aurora-ref-count {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.aurora-textarea-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/* ========================================
+   Aurora Prompt Box - 简洁提示词输入框
+   ======================================== */
+.aurora-prompt-box {
+  position: relative;
+  flex: 1;
+  display: flex;
+  background: var(--color-slate);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-lg);
+  transition: all 200ms ease;
+}
+
+.aurora-prompt-box:focus-within {
+  border-color: var(--color-banana-500);
+  box-shadow: 0 0 0 3px rgba(247, 179, 43, 0.1);
+}
+
+.aurora-prompt-box-icon {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: var(--color-banana-500);
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.aurora-prompt-box:focus-within .aurora-prompt-box-icon {
+  opacity: 1;
+}
+
+.aurora-prompt-box-textarea {
+  flex: 1;
+  min-height: 70px;
+  resize: none;
+  background: transparent;
+  border: none;
+  padding: 10px 12px 10px 36px; /* 左侧留出图标空间 */
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  outline: none;
+}
+
+.aurora-prompt-box-textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Right: Config column (aligned with assistant) */
+.aurora-prompt-config {
+  display: none;
+  width: 320px;
+  flex-shrink: 0;
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-xl);
+  padding: 16px;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (min-width: 1200px) {
+  .aurora-prompt-config {
+    display: flex;
+  }
+}
+
+/* Mobile: Collapsed prompt area */
+@media (max-width: 1199px) {
+  .aurora-prompt-area {
+    flex-direction: column;
+  }
+  
+  .aurora-prompt-input {
+    width: 100%;
+  }
+}
+
+/* ========================================
+   Aurora UI Components
+   ======================================== */
+
+/* Section header */
+.aurora-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.aurora-section-title {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+/* Optimizer section */
+.aurora-optimizer {
+  background: var(--color-slate);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.aurora-optimizer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.aurora-optimizer-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+/* Toggle switch */
+.aurora-toggle {
+  width: 40px;
+  height: 22px;
+  background: var(--color-ash);
+  border-radius: 9999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 200ms;
+  border: none;
+  padding: 0;
+}
+
+.aurora-toggle.active {
+  background: var(--color-banana-500);
+}
+
+.aurora-toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  transition: transform 200ms;
+}
+
+.aurora-toggle.active::after {
+  transform: translateX(18px);
+}
+
+/* Badge */
+.aurora-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 9999px;
+  background: var(--color-slate);
+  color: var(--color-text-secondary);
+}
+
+.aurora-badge-gold {
+  background: rgba(247, 179, 43, 0.15);
+  color: var(--color-banana-500);
+}
+
+/* Generate button */
+.aurora-generate-btn {
+  height: 48px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  border: none;
+  cursor: pointer;
+  transition: all 200ms cubic-bezier(0.33, 1, 0.68, 1);
+  background: linear-gradient(135deg, var(--color-banana-500) 0%, var(--color-banana-600) 100%);
+  color: var(--color-void);
+  box-shadow: var(--shadow-lifted);
+}
+
+.aurora-generate-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px rgba(247, 179, 43, 0.3);
+}
+
+.aurora-generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.aurora-generate-btn.stopping {
+  background: var(--color-slate);
+  color: var(--color-text-primary);
+}
+
+/* Params grid */
+.aurora-params-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+/* Count buttons */
+.aurora-count-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+}
+
+.aurora-count-btn {
+  height: 36px;
+  background: var(--color-slate);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 200ms cubic-bezier(0.33, 1, 0.68, 1);
+}
+
+.aurora-count-btn:hover {
+  border-color: var(--color-smoke);
+  color: var(--color-text-primary);
+}
+
+.aurora-count-btn.active {
+  background: rgba(247, 179, 43, 0.15);
+  border-color: var(--color-banana-500);
+  color: var(--color-banana-500);
+}
+
+/* Batch progress */
+.aurora-batch-progress {
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.aurora-batch-items {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.aurora-batch-item {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.aurora-batch-item.success {
+  background: rgba(52, 211, 153, 0.2);
+  color: var(--color-success);
+}
+
+.aurora-batch-item.running {
+  background: rgba(247, 179, 43, 0.2);
+  color: var(--color-banana-500);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.aurora-batch-item.pending {
+  background: var(--color-ash);
+  color: var(--color-text-muted);
+}
+
+.aurora-batch-item.error {
+  background: rgba(248, 113, 113, 0.2);
+  color: var(--color-error);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* Hide native datalist dropdown arrow for custom styling */
+input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+input[list]::-webkit-list-button {
+  display: none !important;
 }

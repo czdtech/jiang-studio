@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { GeneratedImage, GenerationParams, GeminiSettings, ModelType, ProviderProfile, ProviderScope } from './types';
 import { editImage as editGeminiImage } from './services/gemini';
 import { editImage as editOpenAIImage } from './services/openai';
@@ -26,6 +26,17 @@ const App = () => {
 
   // Tab
   const [activeTab, setActiveTab] = useState<PageTab>('gemini');
+  const [mountedTabs, setMountedTabs] = useState<Record<PageTab, boolean>>(() => ({
+    gemini: true,
+    openai_proxy: false,
+    antigravity_tools: false,
+    kie: false,
+    portfolio: false,
+  }));
+
+  useEffect(() => {
+    setMountedTabs((prev) => (prev[activeTab] ? prev : { ...prev, [activeTab]: true }));
+  }, [activeTab]);
 
   // Modals
   const [editingImage, setEditingImage] = useState<GeneratedImage | null>(null);
@@ -180,49 +191,57 @@ const App = () => {
       {/* Main Content - Top margin for header */}
       <main className="min-h-screen pb-14 md:pb-0 md:pt-12">
         <div className="h-[calc(100vh-48px)] md:h-[calc(100vh-48px)] max-w-7xl mx-auto">
-          {activeTab === 'gemini' && (
-            <GeminiPage
-              saveImage={saveImage}
-              onImageClick={(images, index) => setPreviewData({ images, index })}
-              onEdit={setEditingImage}
-            />
+          {mountedTabs.gemini && (
+            <div className={activeTab === 'gemini' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'gemini'}>
+              <GeminiPage
+                saveImage={saveImage}
+                onImageClick={(images, index) => setPreviewData({ images, index })}
+                onEdit={setEditingImage}
+              />
+            </div>
           )}
 
-          {activeTab === 'openai_proxy' && (
-            <OpenAIPage
-              variant="third_party"
-              portfolio={portfolio}
-              saveImage={saveImage}
-              onImageClick={(images, index) => setPreviewData({ images, index })}
-              onEdit={setEditingImage}
-            />
+          {mountedTabs.openai_proxy && (
+            <div className={activeTab === 'openai_proxy' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'openai_proxy'}>
+              <OpenAIPage
+                variant="third_party"
+                saveImage={saveImage}
+                onImageClick={(images, index) => setPreviewData({ images, index })}
+                onEdit={setEditingImage}
+              />
+            </div>
           )}
 
-          {activeTab === 'antigravity_tools' && (
-            <OpenAIPage
-              variant="antigravity_tools"
-              portfolio={portfolio}
-              saveImage={saveImage}
-              onImageClick={(images, index) => setPreviewData({ images, index })}
-              onEdit={setEditingImage}
-            />
+          {mountedTabs.antigravity_tools && (
+            <div className={activeTab === 'antigravity_tools' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'antigravity_tools'}>
+              <OpenAIPage
+                variant="antigravity_tools"
+                saveImage={saveImage}
+                onImageClick={(images, index) => setPreviewData({ images, index })}
+                onEdit={setEditingImage}
+              />
+            </div>
           )}
 
-          {activeTab === 'kie' && (
-            <KiePage
-              saveImage={saveImage}
-              onImageClick={(images, index) => setPreviewData({ images, index })}
-              onEdit={setEditingImage}
-            />
+          {mountedTabs.kie && (
+            <div className={activeTab === 'kie' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'kie'}>
+              <KiePage
+                saveImage={saveImage}
+                onImageClick={(images, index) => setPreviewData({ images, index })}
+                onEdit={setEditingImage}
+              />
+            </div>
           )}
 
-          {activeTab === 'portfolio' && (
-            <PortfolioGrid
-              images={portfolio}
-              onImageClick={(images, index) => setPreviewData({ images, index })}
-              onEdit={setEditingImage}
-              onDelete={deleteImage}
-            />
+          {mountedTabs.portfolio && (
+            <div className={activeTab === 'portfolio' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'portfolio'}>
+              <PortfolioGrid
+                images={portfolio}
+                onImageClick={(images, index) => setPreviewData({ images, index })}
+                onEdit={setEditingImage}
+                onDelete={deleteImage}
+              />
+            </div>
           )}
         </div>
       </main>
