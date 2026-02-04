@@ -1,6 +1,7 @@
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React from 'react';
 import { Sparkles, Edit, Download, Image, AlertTriangle } from 'lucide-react';
 import { GeneratedImage, GenerationParams } from '../types';
+import { ImageInfoPopover } from './ImageInfoPopover';
 
 export type ImageGridSlot =
   | { id: string; status: 'pending' }
@@ -17,8 +18,8 @@ interface ImageGridProps {
   onEdit: (image: GeneratedImage) => void;
 }
 
-const MIN_CARD_SIZE = 72;
-const GRID_GAP = 16;
+const GRID_GAP = 12;
+const MAX_COLUMNS = 4;
 
 export const ImageGrid = ({
   images,
@@ -35,71 +36,21 @@ export const ImageGrid = ({
   const displayCards = Math.max(totalCards, 1);
   const remainingCards = Math.max(totalCards - images.length, 0);
 
-  const gridRef = useRef<HTMLDivElement | null>(null);
-  const [gridLayout, setGridLayout] = useState<{ cols: number; size: number }>({
-    cols: 1,
-    size: MIN_CARD_SIZE,
-  });
-
-  const computeLayout = useCallback((width: number, height: number, count: number) => {
-    const safeCount = Math.max(1, count);
-    const safeWidth = Math.max(0, width);
-    const safeHeight = Math.max(0, height);
-    let bestCols = 1;
-    let bestSize = 0;
-
-    for (let cols = 1; cols <= safeCount; cols++) {
-      const rows = Math.ceil(safeCount / cols);
-      const maxWidth = (safeWidth - GRID_GAP * (cols - 1)) / cols;
-      const maxHeight = (safeHeight - GRID_GAP * (rows - 1)) / rows;
-      const size = Math.min(maxWidth, maxHeight);
-      if (size > bestSize) {
-        bestSize = size;
-        bestCols = cols;
-      }
-    }
-
-    const nextSize = Number.isFinite(bestSize) && bestSize > 0 ? Math.floor(bestSize) : MIN_CARD_SIZE;
-    return {
-      cols: bestCols,
-      size: Math.max(1, nextSize),
-    };
-  }, []);
-
-  useLayoutEffect(() => {
-    if (showEmptyState) return;
-    const el = gridRef.current;
-    if (!el) return;
-
-    let frame = 0;
-    const update = () => {
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        const rect = el.getBoundingClientRect();
-        setGridLayout(computeLayout(rect.width, rect.height, displayCards));
-      });
-    };
-
-    update();
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => {
-      cancelAnimationFrame(frame);
-      ro.disconnect();
-    };
-  }, [computeLayout, displayCards, showEmptyState]);
-
-  const gridStyle = useMemo<React.CSSProperties>(() => ({
-    gridTemplateColumns: `repeat(${gridLayout.cols}, ${gridLayout.size}px)`,
-    gridAutoRows: `${gridLayout.size}px`,
+  const columns = Math.min(MAX_COLUMNS, Math.max(1, displayCards));
+  const fullWidth = columns === MAX_COLUMNS;
+  const shrinkWidth = `calc((100% - ${GRID_GAP * 3}px) / ${MAX_COLUMNS} * ${columns} + ${GRID_GAP}px * ${columns - 1})`;
+  const gridStyle: React.CSSProperties = {
+    gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
     gap: `${GRID_GAP}px`,
-    justifyContent: 'center',
-    alignContent: 'center',
-  }), [gridLayout]);
+    alignItems: 'start',
+    width: '100%',
+    maxWidth: fullWidth ? '100%' : shrinkWidth,
+    marginRight: 'auto',
+  };
 
   const renderGrid = (children: React.ReactNode) => (
-    <div ref={gridRef} className="flex-1 min-h-0 w-full">
-      <div className="grid w-full h-full" style={gridStyle}>
+    <div className="flex-1 min-h-0 w-full">
+      <div className="grid w-full" style={gridStyle}>
         {children}
       </div>
     </div>
@@ -129,7 +80,7 @@ export const ImageGrid = ({
             return (
               <div
                 key={slot.id}
-                className="w-full h-full bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center"
+                className="w-full aspect-square bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center"
               >
                 <Sparkles className="text-banana-500/30 w-12 h-12 animate-pulse" />
               </div>
@@ -140,7 +91,7 @@ export const ImageGrid = ({
             return (
               <div
                 key={slot.id}
-                className="w-full h-full bg-dark-surface/30 rounded-xl border border-red-500/40 flex flex-col items-center justify-center p-4 text-center"
+                className="w-full aspect-square bg-dark-surface/30 rounded-xl border border-red-500/40 flex flex-col items-center justify-center p-4 text-center"
               >
                 <AlertTriangle className="w-10 h-10 text-red-400/80 mb-3" />
                 <p className="text-sm font-semibold text-red-200">生成失败</p>
@@ -157,48 +108,41 @@ export const ImageGrid = ({
           const idx = successIndex;
 
           return (
-            <div
-              key={slot.id}
-              role="button"
-              tabIndex={0}
-              className="group relative w-full h-full bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
-              onClick={() => onImageClick(successImages, idx)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  onImageClick(successImages, idx);
-                }
-              }}
-            >
-              <img src={img.base64} alt={img.prompt} className="w-full h-full object-contain" />
+            <div key={slot.id} className="relative w-full h-full group">
+              <div
+                role="button"
+                tabIndex={0}
+                className="relative w-full overflow-hidden rounded-[var(--radius-lg)] cursor-pointer transition-opacity duration-200 hover:opacity-90"
+                onClick={() => onImageClick(successImages, idx)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onImageClick(successImages, idx);
+                  }
+                }}
+              >
+                <img src={img.base64} alt={img.prompt} className="w-full h-auto block" />
 
-              {/* Overlay Controls */}
-              <div className="absolute inset-0 bg-black/60 opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
-                <div className="flex gap-2">
+                <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
                     onClick={(e) => { e.stopPropagation(); onEdit(img); }}
-                    className="bg-white text-black px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-banana-400 transition-colors"
+                    aria-label="编辑图片"
+                    className="h-8 w-8 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-banana-500 transition-colors flex items-center justify-center"
                   >
-                    <Edit className="w-4 h-4" /> 编辑
+                    <Edit className="w-4 h-4" />
                   </button>
                   <a
                     href={img.base64}
                     download={`nano-banana-${img.id}.png`}
                     onClick={(e) => e.stopPropagation()}
                     aria-label="下载图片"
-                    className="bg-dark-surface text-white px-3 py-2 rounded-lg border border-dark-border hover:bg-dark-border"
+                    className="h-8 w-8 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-text-primary transition-colors flex items-center justify-center"
                   >
                     <Download className="w-4 h-4" />
                   </a>
                 </div>
-                <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 to-transparent pointer-events-none">
-                  <p className="text-xs text-white line-clamp-2 text-center px-2">{img.prompt}</p>
-                  <div className="flex justify-between items-center px-2 mt-1">
-                    <span className="text-[10px] text-gray-300 uppercase bg-black/50 px-1 rounded">{img.params.imageSize || '1K'}</span>
-                    <span className="text-[10px] text-gray-300 uppercase bg-black/50 px-1 rounded">{img.params.aspectRatio}</span>
-                  </div>
-                </div>
               </div>
+              <ImageInfoPopover image={img} />
             </div>
           );
         })}
@@ -211,54 +155,47 @@ export const ImageGrid = ({
       {!hasSlots && isGenerating && remainingCards > 0 && (
         // Simple Skeleton
         Array.from({ length: remainingCards }).map((_, i) => (
-          <div key={i} className="w-full h-full bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center">
+          <div key={i} className="w-full aspect-square bg-dark-surface rounded-xl border border-dark-border animate-pulse flex items-center justify-center">
             <Sparkles className="text-banana-500/30 w-12 h-12 animate-pulse" />
           </div>
         ))
       )}
       {images.map((img, idx) => (
-        <div
-          key={img.id}
-          role="button"
-          tabIndex={0}
-          className="group relative w-full h-full bg-black rounded-xl overflow-hidden border border-dark-border shadow-xl cursor-pointer hover:border-banana-500/50 transition-all duration-200"
-          onClick={() => onImageClick(images, idx)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              onImageClick(images, idx);
-            }
-          }}
-        >
-          <img src={img.base64} alt={img.prompt} className="w-full h-full object-contain" />
+        <div key={img.id} className="relative w-full h-full group">
+          <div
+            role="button"
+            tabIndex={0}
+            className="relative w-full overflow-hidden rounded-[var(--radius-lg)] cursor-pointer transition-opacity duration-200 hover:opacity-90"
+            onClick={() => onImageClick(images, idx)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                onImageClick(images, idx);
+              }
+            }}
+          >
+            <img src={img.base64} alt={img.prompt} className="w-full h-auto block" />
 
-          {/* Overlay Controls */}
-          <div className="absolute inset-0 bg-black/60 opacity-0 invisible group-hover:visible group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-4">
-            <div className="flex gap-2">
+            <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 onClick={(e) => { e.stopPropagation(); onEdit(img); }}
-                className="bg-white text-black px-4 py-2 rounded-lg font-bold flex items-center gap-2 hover:bg-banana-400 transition-colors"
+                aria-label="编辑图片"
+                className="h-8 w-8 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-banana-500 transition-colors flex items-center justify-center"
               >
-                <Edit className="w-4 h-4" /> 编辑
+                <Edit className="w-4 h-4" />
               </button>
               <a
                 href={img.base64}
                 download={`nano-banana-${img.id}.png`}
                 onClick={(e) => e.stopPropagation()}
                 aria-label="下载图片"
-                className="bg-dark-surface text-white px-3 py-2 rounded-lg border border-dark-border hover:bg-dark-border"
+                className="h-8 w-8 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-text-primary transition-colors flex items-center justify-center"
               >
                 <Download className="w-4 h-4" />
               </a>
             </div>
-            <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/90 to-transparent pointer-events-none">
-              <p className="text-xs text-white line-clamp-2 text-center px-2">{img.prompt}</p>
-              <div className="flex justify-between items-center px-2 mt-1">
-                <span className="text-[10px] text-gray-300 uppercase bg-black/50 px-1 rounded">{img.params.imageSize || '1K'}</span>
-                <span className="text-[10px] text-gray-300 uppercase bg-black/50 px-1 rounded">{img.params.aspectRatio}</span>
-              </div>
-            </div>
           </div>
+          <ImageInfoPopover image={img} />
         </div>
       ))}
     </>

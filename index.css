@@ -83,6 +83,143 @@ h1, h2, h3, h4, h5, h6 {
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
 }
 
+/* ========================================
+   Aurora Navigation
+   ======================================== */
+.aurora-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: rgba(13, 14, 16, 0.9);
+  border-bottom: 1px solid var(--color-ash);
+  z-index: 50;
+  display: none;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+@media (min-width: 768px) {
+  .aurora-header {
+    display: flex;
+    align-items: center;
+  }
+}
+
+.aurora-header-inner {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.aurora-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.aurora-logo-icon {
+  width: 36px;
+  height: 36px;
+  background: linear-gradient(135deg, var(--color-banana-500) 0%, var(--color-banana-600) 100%);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-obsidian);
+  box-shadow: var(--shadow-glow);
+}
+
+.aurora-logo-text {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.aurora-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.aurora-nav-link {
+  padding: 8px 12px;
+  color: var(--color-text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: var(--radius-md);
+  transition: all 200ms var(--ease-spring);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+
+.aurora-nav-link:hover {
+  color: var(--color-text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.aurora-nav-link.active {
+  color: var(--color-banana-500);
+  background: rgba(247, 179, 43, 0.1);
+}
+
+.aurora-mobile-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 56px;
+  background: rgba(13, 14, 16, 0.95);
+  border-top: 1px solid var(--color-ash);
+  z-index: 50;
+  display: flex;
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+}
+
+@media (min-width: 768px) {
+  .aurora-mobile-nav {
+    display: none;
+  }
+}
+
+.aurora-mobile-nav-inner {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  height: 100%;
+  padding: 0 4px;
+}
+
+.aurora-mobile-item {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--color-text-muted);
+  transition: all 200ms var(--ease-spring);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+}
+
+.aurora-mobile-item.active {
+  color: var(--color-banana-500);
+  background: rgba(247, 179, 43, 0.1);
+}
+
 /* Aurora Selection */
 ::selection {
   background: rgba(247, 179, 43, 0.3);
@@ -170,6 +307,43 @@ a:focus-visible,
   }
 }
 
+@media (max-width: 767px) {
+  .aurora-page {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  .aurora-main-row {
+    gap: 12px;
+  }
+
+  .aurora-prompt-area {
+    gap: 12px;
+  }
+
+  .aurora-sidebar,
+  .aurora-prompt-input,
+  .aurora-prompt-optimizer,
+  .aurora-prompt-config {
+    padding: 12px;
+    border-radius: var(--radius-lg);
+  }
+
+  .aurora-canvas-header {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .aurora-canvas-body {
+    padding: 12px;
+  }
+
+  .aurora-batch-progress {
+    margin-bottom: 12px;
+  }
+}
+
 /* Sidebar column */
 .aurora-sidebar {
   width: 100%;
@@ -215,11 +389,22 @@ a:focus-visible,
 .aurora-canvas-body {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+
+/* batch uses same scroll behavior */
+.aurora-canvas-body-batch {
+  overflow-y: auto;
+}
+
+/* Ensure grid items don't overflow their cells */
+.aurora-canvas-body .grid > * {
+  box-sizing: border-box;
 }
 
 /* Assistant panel */
@@ -665,16 +850,25 @@ a:focus-visible,
   flex-wrap: wrap;
 }
 
+.aurora-batch-items-inline {
+  flex-wrap: nowrap;
+  overflow: hidden;
+  max-width: 240px;
+  min-width: 0;
+}
+
 .aurora-batch-item {
   width: 24px;
   height: 24px;
   border-radius: var(--radius-sm);
+  border: 1px solid transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 11px;
   font-weight: 600;
 }
+
 
 .aurora-batch-item.success {
   background: rgba(52, 211, 153, 0.2);
@@ -695,6 +889,186 @@ a:focus-visible,
 .aurora-batch-item.error {
   background: rgba(248, 113, 113, 0.2);
   color: var(--color-error);
+}
+
+.aurora-batch-item.ellipsis {
+  background: var(--color-ash);
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+/* Batch result grid */
+.aurora-batch-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.aurora-batch-row {
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.aurora-batch-row-index {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-ash);
+  background: var(--color-graphite);
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.aurora-batch-row-grid {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  align-items: start;
+}
+
+.aurora-batch-card {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  border: none;
+  background: transparent;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: start;
+}
+
+.aurora-batch-select {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  background: rgba(8, 9, 10, 0.85);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transition: opacity 0.2s ease, border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+  z-index: 2;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+
+.aurora-batch-select svg {
+  opacity: 0.45;
+}
+
+.aurora-batch-select.selected {
+  background: var(--color-banana-500);
+  color: var(--color-obsidian);
+  border-color: var(--color-banana-500);
+  box-shadow: 0 0 0 2px rgba(247, 179, 43, 0.25);
+}
+
+.aurora-batch-select.selected svg {
+  opacity: 1;
+}
+
+.aurora-batch-card-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.aurora-batch-card-pending {
+  background: var(--color-dark-surface);
+  border-color: var(--color-dark-border);
+  aspect-ratio: 1 / 1;
+}
+
+.aurora-batch-card-error {
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.4);
+  color: var(--color-error);
+  text-align: center;
+  padding: 12px;
+  flex-direction: column;
+  aspect-ratio: 1 / 1;
+}
+
+/* Result hover info popover */
+.aurora-image-popover {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 12px);
+  width: 260px;
+  background: var(--color-graphite);
+  border: 1px solid var(--color-ash);
+  border-radius: var(--radius-lg);
+  padding: 12px;
+  color: var(--color-text-secondary);
+  box-shadow: var(--shadow-floating);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  pointer-events: none;
+  z-index: 30;
+}
+
+.group:hover .aurora-image-popover {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.aurora-image-popover-title {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  margin-bottom: 6px;
+  letter-spacing: 0.04em;
+}
+
+.aurora-image-popover-prompt {
+  font-size: 12px;
+  color: var(--color-text-primary);
+  line-height: 1.4;
+  max-height: 4.2em;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.aurora-image-popover-meta {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.aurora-image-popover-meta > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.aurora-image-popover-meta span:first-child {
+  color: var(--color-text-muted);
+}
+
+.aurora-image-popover-meta span:last-child {
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 767px) {
+  .aurora-image-popover {
+    display: none;
+  }
 }
 
 @keyframes pulse {

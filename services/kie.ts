@@ -172,29 +172,79 @@ export const waitForResultUrls = async (
   }
 };
 
+/**
+ * 根据模型类型构建 Kie API 输入参数
+ * 
+ * 不同模型的参数格式：
+ * - Nano Banana (google/nano-banana): prompt, image_size (比例), output_format
+ * - Nano Banana Edit (google/nano-banana-edit): prompt, image_urls (必需), image_size, output_format
+ * - Nano Banana Pro (google/nano-banana-pro): prompt, aspect_ratio, resolution, image_input, output_format
+ * - Imagen 4 系列: prompt, aspect_ratio, num_images, negative_prompt, seed
+ */
 const buildKieInput = (
   params: GenerationParams,
-  imageInputUrls: string[]
+  imageInputUrls: string[],
+  model: string
 ): Record<string, unknown> => {
+  const modelLower = model.toLowerCase();
+  
+  // Imagen 4 系列
+  if (modelLower.includes('imagen-4') || modelLower.includes('imagen4')) {
+    const input: Record<string, unknown> = {
+      prompt: params.prompt,
+      aspect_ratio: params.aspectRatio,
+    };
+    // Imagen 4 不支持 image_input，只支持 negative_prompt、num_images、seed
+    return input;
+  }
+  
+  // Nano Banana Edit - 图片编辑模型
+  if (modelLower.includes('nano-banana-edit') || modelLower.includes('nanobananaedit')) {
+    if (imageInputUrls.length === 0) {
+      throw new Error('Nano Banana Edit 模型需要提供参考图片（image_urls）');
+    }
+    return {
+      prompt: params.prompt,
+      image_urls: imageInputUrls.slice(0, 10), // 最多 10 张
+      image_size: params.aspectRatio, // Nano Banana Edit 使用 image_size 存比例
+      output_format: params.outputFormat || 'png',
+    };
+  }
+  
+  // Nano Banana Pro - 高质量模型
+  if (modelLower.includes('nano-banana-pro') || modelLower.includes('nanobananapro')) {
+    const input: Record<string, unknown> = {
+      prompt: params.prompt,
+      aspect_ratio: params.aspectRatio,
+      resolution: params.imageSize, // 1K/2K/4K
+      output_format: params.outputFormat || 'png',
+    };
+    if (imageInputUrls.length > 0) {
+      input.image_input = imageInputUrls.slice(0, 8); // 最多 8 张
+    }
+    return input;
+  }
+  
+  // Nano Banana (默认) - 文生图/图生图
   const input: Record<string, unknown> = {
     prompt: params.prompt,
-    aspect_ratio: params.aspectRatio,
-    resolution: params.imageSize,
+    image_size: params.aspectRatio, // Nano Banana 使用 image_size 存比例
     output_format: params.outputFormat || 'png',
   };
-  if (imageInputUrls.length > 0) input.image_input = imageInputUrls;
+  // 注意：标准 Nano Banana 不支持 image_input 参数
   return input;
 };
 
 const resolveImageInputUrls = async (
   images: string[],
+  apiKey: string,
   signal?: AbortSignal
 ): Promise<string[]> => {
   const list: string[] = [];
   for (const img of images) {
     if (signal?.aborted) throw createAbortError();
     if (!img || typeof img !== 'string') continue;
-    const url = await ensureImageUrl(img, { signal });
+    const url = await ensureImageUrl(img, { signal, apiKey });
     list.push(url);
     if (list.length >= 8) break;
   }
@@ -211,10 +261,10 @@ const generateSingle = async (
   if (!model) throw new Error('模型名为空');
 
   const imageInputUrls = options?.imageInputUrls
-    ? await resolveImageInputUrls(options.imageInputUrls, signal)
-    : await resolveImageInputUrls(params.referenceImages || [], signal);
+    ? await resolveImageInputUrls(options.imageInputUrls, settings.apiKey, signal)
+    : await resolveImageInputUrls(params.referenceImages || [], settings.apiKey, signal);
 
-  const taskId = await createTask(settings, model, buildKieInput(params, imageInputUrls), signal);
+  const taskId = await createTask(settings, model, buildKieInput(params, imageInputUrls, model), signal);
   const urls = await waitForResultUrls(settings, taskId, { signal });
 
   const img = createGeneratedImage(urls[0]!, params, true);
@@ -231,7 +281,7 @@ export const generateImages = async (
 
   // refImages 上传一次，复用给并发任务，避免每张图重复上传
   const raw = options?.imageInputUrls ?? params.referenceImages ?? [];
-  const sharedImageInputUrls = raw.length > 0 ? await resolveImageInputUrls(raw, signal) : [];
+  const sharedImageInputUrls = raw.length > 0 ? await resolveImageInputUrls(raw, settings.apiKey, signal) : [];
 
   const perTaskOptions = { ...options, imageInputUrls: sharedImageInputUrls };
 
@@ -283,8 +333,8 @@ export const editImage = async (
   const aspectRatio = prevParams?.aspectRatio || '1:1';
   const imageSize = prevParams?.imageSize || '1K';
 
-  const sourceUrl = await ensureImageUrl(sourceImageUrlOrDataUrl, { signal });
-  const extra = await resolveImageInputUrls(options?.imageInputUrls || [], signal);
+  const sourceUrl = await ensureImageUrl(sourceImageUrlOrDataUrl, { signal, apiKey: settings.apiKey });
+  const extra = await resolveImageInputUrls(options?.imageInputUrls || [], settings.apiKey, signal);
   const imageInputUrls = [sourceUrl, ...extra].slice(0, 8);
 
   const editParams: GenerationParams = {
@@ -299,7 +349,7 @@ export const editImage = async (
   const taskId = await createTask(
     settings,
     model,
-    buildKieInput(editParams, imageInputUrls),
+    buildKieInput(editParams, imageInputUrls, model),
     signal
   );
 

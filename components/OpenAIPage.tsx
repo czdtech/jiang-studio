@@ -18,6 +18,7 @@ import { optimizeUserPrompt } from '../services/mcp';
 import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
+import { BatchImageGrid } from './BatchImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { RefImageRow } from './RefImageRow';
@@ -111,7 +112,7 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
       scope,
       name: '本地反代',
       apiKey: 'sk-antigravity',
-      baseUrl: '/antigravity',
+      baseUrl: 'http://127.0.0.1:8045',
       defaultModel: 'gemini-3-pro-image',
       favorite: true,
       createdAt: now,
@@ -124,7 +125,7 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
     scope,
     name: '默认供应商',
     apiKey: '',
-    baseUrl: 'https://api.openai.com',
+    baseUrl: '',
     defaultModel: 'gemini-3-pro-image',
     favorite: false,
     createdAt: now,
@@ -188,6 +189,26 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         nextProviders = [def];
       }
 
+      // 自动修复：Antigravity 供应商的 baseUrl 如果是相对路径，修复为绝对 URL
+      if (scope === 'antigravity_tools') {
+        const needsFix = nextProviders.filter(
+          (p) => p.baseUrl && !p.baseUrl.startsWith('http')
+        );
+        for (const p of needsFix) {
+          console.log('[OpenAIPage] Auto-fixing Antigravity baseUrl:', p.baseUrl, '->', 'http://127.0.0.1:8045');
+          const fixed: ProviderProfile = {
+            ...p,
+            baseUrl: 'http://127.0.0.1:8045',
+            updatedAt: Date.now(),
+          };
+          await upsertProviderInDb(fixed);
+        }
+        if (needsFix.length > 0) {
+          // 重新加载修复后的列表
+          nextProviders = await getProvidersFromDb(scope);
+        }
+      }
+
       const savedActiveId = await getActiveProviderIdFromDb(scope);
       const fallbackId = nextProviders[0]?.id || '';
       const nextActiveId =
@@ -214,7 +235,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     if (variant === 'antigravity_tools') {
       return {
         apiKey: 'sk-antigravity',
-        baseUrl: '/antigravity',
+        baseUrl: 'http://127.0.0.1:8045',
       };
     }
     return { apiKey: '', baseUrl: 'https://api.openai.com' };
@@ -289,8 +310,8 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   // 批量任务状态
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
   const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
-  const [batchModeEnabled, setBatchModeEnabled] = useState(false); // 手动开关：是否启用批量模式
   const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
+  const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
 
   const inferredAntigravityConfig = useMemo(() => {
     if (!isAntigravityTools) return null;
@@ -429,12 +450,12 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   };
 
   const handleCreateProvider = async () => {
-    const base = activeProvider || createDefaultProvider(scope);
+    const base = createDefaultProvider(scope);
     const now = Date.now();
     const created: ProviderProfile = {
       ...base,
       id: crypto.randomUUID(),
-      name: base ? `复制 - ${base.name}` : '新供应商',
+      name: '新供应商',
       favorite: false,
       createdAt: now,
       updatedAt: now,
@@ -473,17 +494,29 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   };
 
   const handleRefreshModels = async () => {
-    if (!activeProvider) return;
+    if (!activeProvider) {
+      console.log('[handleRefreshModels] No activeProvider, returning');
+      return;
+    }
     if (!settings.baseUrl) {
+      console.log('[handleRefreshModels] No baseUrl, showing error');
       showToast('请先填写 Base URL', 'error');
       return;
     }
+
+    console.log('[handleRefreshModels] Starting refresh', {
+      variant,
+      baseUrl: settings.baseUrl,
+      hasApiKey: !!settings.apiKey,
+      providerId: activeProvider.id,
+    });
 
     setIsLoadingModels(true);
     setModelsHint('');
     try {
       const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
       const url = `${cleanBaseUrl}/v1/models`;
+      console.log('[handleRefreshModels] Fetching URL:', url);
 
       const fetchModels = async (withAuth: boolean): Promise<Response> => {
         const headers: Record<string, string> = {};
@@ -494,41 +527,49 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         return fetch(url, { method: 'GET', headers });
       };
 
-      // 如果有 API Key，直接带上 Authorization；否则先不带，失败后再重试
-      let resp: Response;
-      const hasApiKey = !!(settings.apiKey || variant === 'antigravity_tools');
-      
-      if (hasApiKey) {
-        // 有 API Key，直接带上
+      // 认证策略：如果配置了 API Key，优先带上 Authorization（某些 API 如 yunwu.ai 不允许匿名访问）
+      // 如果没有配置 API Key，则先不带 Authorization 尝试
+      const hasApiKey = !!settings.apiKey || variant === 'antigravity_tools';
+      console.log('[handleRefreshModels] Sending request with auth:', hasApiKey);
+      let resp = await fetchModels(hasApiKey);
+      console.log('[handleRefreshModels] Response status:', resp.status);
+
+      // 如果首次不带 auth 请求失败（401/403），且有可用的 API Key，则重试
+      if (!hasApiKey && (resp.status === 401 || resp.status === 403) && settings.apiKey) {
+        console.log('[handleRefreshModels] Retrying with auth');
         resp = await fetchModels(true);
-      } else {
-        // 没有 API Key，先不带 Authorization 尝试
-        resp = await fetchModels(false);
-        if ((resp.status === 401 || resp.status === 403)) {
-          // 如果需要鉴权，提示用户
-          throw new Error('该接口需要 API Key 鉴权，请先填写 API Key');
-        }
+        console.log('[handleRefreshModels] Retry response status:', resp.status);
       }
 
       if (!resp.ok) {
         const errText = await resp.text();
+        console.log('[handleRefreshModels] Error response:', errText);
         throw new Error(`API error ${resp.status}: ${errText}`);
       }
 
       const json = (await resp.json()) as { data?: unknown[] };
+      console.log('[handleRefreshModels] Response JSON:', JSON.stringify(json).slice(0, 500));
       const raw = Array.isArray(json.data) ? json.data : [];
+      console.log('[handleRefreshModels] Raw models count:', raw.length);
 
       const ids = raw
         .map((m) => (m && typeof m === 'object' ? (m as { id?: unknown }).id : undefined))
         .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
 
       const uniqueIds = Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
+      console.log('[handleRefreshModels] Unique model IDs:', uniqueIds);
       setAvailableModels(uniqueIds);
 
       const geminiImageIds = uniqueIds.filter(isGeminiImageModelId);
-      setAvailableImageModels(geminiImageIds);
+      console.log('[handleRefreshModels] Gemini image models:', geminiImageIds);
+      
+      // 如果没有筛选到 Gemini 图像模型，则使用所有模型（兼容非 Gemini 的中转服务）
+      const effectiveImageModels = geminiImageIds.length > 0 ? geminiImageIds : uniqueIds;
+      console.log('[handleRefreshModels] Effective image models:', effectiveImageModels.length);
+      setAvailableImageModels(effectiveImageModels);
 
       const textIds = uniqueIds.filter(isTextModelId);
+      console.log('[handleRefreshModels] Text models:', textIds.length);
       setAvailableTextModels(textIds);
 
       const modelsCache = {
@@ -551,8 +592,9 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
 
       const hints: string[] = [];
-      if (geminiImageIds.length > 0) {
-        hints.push(`${geminiImageIds.length} 个图像模型`);
+      if (effectiveImageModels.length > 0) {
+        const label = geminiImageIds.length > 0 ? 'Gemini 图像模型' : '可用模型';
+        hints.push(`${effectiveImageModels.length} 个${label}`);
       }
       if (textIds.length > 0) {
         hints.push(`${textIds.length} 个文本模型`);
@@ -562,6 +604,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       } else {
         setModelsHint(`已刷新模型列表（${uniqueIds.length}），但未找到图像/文本模型；请手动输入模型名。`);
       }
+      console.log('[handleRefreshModels] Hint:', hints);
 
       showToast('Models refreshed', 'success');
     } catch (e) {
@@ -754,17 +797,66 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   };
 
   // 解析多行提示词为批量任务
+  /**
+   * 解析多行提示词为批量任务
+   * - 使用 --- 分隔符明确区分多个提示词
+   * - JSON/结构化文本自动识别为单个提示词
+   * - 普通多行文本按行分割
+   */
   const parsePromptsToBatch = (text: string): string[] => {
-    return text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+
+    // 1. 优先检测是否使用了分隔符 ---
+    if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
+      return trimmed
+        .split(/\n-{3,}\n?/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
+
+    // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return [trimmed];
+    }
+
+    // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
+    const lines = trimmed.split('\n');
+    const hasStructuredContent = lines.some(
+      (line) =>
+        line.startsWith('  ') ||
+        line.startsWith('\t') ||
+        /^\s*["'{[]/.test(line)
+    );
+
+    if (hasStructuredContent) {
+      return [trimmed];
+    }
+
+    // 4. 默认按行分割
+    return lines.map((line) => line.trim()).filter((line) => line.length > 0);
   };
 
   // 批量模式下的任务数（用于 UI 显示）
   const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
   const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
-  const batchPromptCount = batchModeEnabled ? Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount) : 0;
+  const batchPromptCount = Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount);
+  const selectedBatchImages = useMemo(() => {
+    if (selectedBatchImageIds.length === 0) return [];
+    const idSet = new Set(selectedBatchImageIds);
+    return batchTasks
+      .flatMap((t) => t.images || [])
+      .filter((img) => idSet.has(img.id));
+  }, [batchTasks, selectedBatchImageIds]);
+
+  useEffect(() => {
+    if (batchTasks.length === 0) {
+      setSelectedBatchImageIds([]);
+      return;
+    }
+    const availableIds = new Set(batchTasks.flatMap((t) => t.images || []).map((img) => img.id));
+    setSelectedBatchImageIds((prev) => prev.filter((id) => availableIds.has(id)));
+  }, [batchTasks]);
 
   const handleBatchGenerate = async () => {
     if (generateLockRef.current) return;
@@ -813,6 +905,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     // 批量模式用 images 渲染，不用 slots
     setGeneratedImages([]);
     setGeneratedSlots([]);
+    setSelectedBatchImageIds([]);
 
     let successCount = 0;
     const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
@@ -1008,6 +1101,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     setIsBatchMode(false);
     setGeneratedImages([]);
     setGeneratedSlots([]);
+    setSelectedBatchImageIds([]);
   };
 
   const handleBatchDownloadAll = async () => {
@@ -1017,6 +1111,17 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
     try {
       const n = await downloadImagesSequentially(images, { delayMs: 140 });
+      showToast(`已开始下载 ${n} 张`, 'success');
+    } catch (e) {
+      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    }
+  };
+
+  const handleBatchDownloadSelected = async () => {
+    if (isGenerating) return;
+    if (selectedBatchImages.length === 0) return;
+    try {
+      const n = await downloadImagesSequentially(selectedBatchImages, { delayMs: 140 });
       showToast(`已开始下载 ${n} 张`, 'success');
     } catch (e) {
       showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
@@ -1118,6 +1223,18 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             </div>
           </div>
 
+          {/* 供应商名称编辑 */}
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">供应商名称</label>
+            <input
+              type="text"
+              value={providerName}
+              onChange={(e) => setProviderName(e.target.value)}
+              placeholder="自定义名称..."
+              className={inputBaseStyles}
+            />
+          </div>
+
           {/* API Key */}
           <form className="space-y-2" onSubmit={(e) => e.preventDefault()} autoComplete="off">
             <label className="text-xs text-text-muted">API Key</label>
@@ -1175,14 +1292,16 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             </div>
             <span className="aurora-badge aurora-badge-gold">{variant === 'antigravity_tools' ? 'Antigravity' : 'OpenAI'}</span>
           </div>
-          <div className="aurora-canvas-body">
+          <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
             {/* 批量模式进度条 */}
             {isBatchMode && batchTasks.length > 0 && (
               <div className="aurora-batch-progress">
                 <div className="flex items-center justify-between mb-2 gap-2">
-                  <span className="text-sm text-text-secondary">
-                    批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
-                  </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm text-text-secondary whitespace-nowrap">
+                      批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="flex gap-2 text-xs">
                       <span className="text-success">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
@@ -1201,43 +1320,51 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                     {!isGenerating &&
                       batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
                       batchTasks.some(t => (t.images?.length || 0) > 0) && (
-                        <button
-                          type="button"
-                          onClick={() => void handleBatchDownloadAll()}
-                          className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
-                        >
-                          下载全部
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void handleBatchDownloadAll()}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
+                          >
+                            下载全部
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleBatchDownloadSelected()}
+                            disabled={selectedBatchImages.length === 0}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
+                          >
+                            下载选中
+                          </button>
+                        </>
                       )}
                   </div>
                 </div>
-                <div className="aurora-batch-items">
-                  {batchTasks.map((task, idx) => (
-                    <div
-                      key={task.id}
-                      className={`aurora-batch-item ${
-                        task.status === 'success' ? 'success' :
-                        task.status === 'error' ? 'error' :
-                        task.status === 'running' ? 'running' :
-                        'pending'
-                      }`}
-                      title={task.prompt}
-                    >
-                      {idx + 1}
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
-            <ImageGrid
-              images={generatedImages}
-              slots={isBatchMode ? undefined : generatedSlots}
-              isGenerating={isGenerating}
-              params={params}
-              expectedCount={isBatchMode ? batchPromptCount * safePreviewCountPerPrompt : undefined}
-              onImageClick={onImageClick}
-              onEdit={onEdit}
-            />
+            {isBatchMode ? (
+              <BatchImageGrid
+                tasks={batchTasks}
+                countPerPrompt={safePreviewCountPerPrompt}
+                selectedImageIds={selectedBatchImageIds}
+                onToggleSelect={(id) => {
+                  setSelectedBatchImageIds((prev) =>
+                    prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+                  );
+                }}
+                onImageClick={onImageClick}
+                onEdit={onEdit}
+              />
+            ) : (
+              <ImageGrid
+                images={generatedImages}
+                slots={generatedSlots}
+                isGenerating={isGenerating}
+                params={params}
+                onImageClick={onImageClick}
+                onEdit={onEdit}
+              />
+            )}
           </div>
         </div>
 
@@ -1342,25 +1469,41 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         <div className="aurora-prompt-config">
           {/* 模型（独占一行） */}
           <div>
-            <label className="text-xs text-text-muted mb-1 block">模型</label>
+            <label className="text-xs text-text-muted mb-1 block">模型 {availableImageModels.length > 0 && <span className="text-banana-500">({availableImageModels.length})</span>}</label>
             <div className="relative">
-              <input
-                type="text"
-                list="image-models-list"
-                value={customModel}
+              <select
+                value={availableImageModels.includes(customModel) ? customModel : ''}
                 onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="gemini-3-pro-image"
-                className={`${inputBaseStyles} pr-8`}
-              />
+                className={`${selectBaseStyles} ${!availableImageModels.includes(customModel) && customModel ? 'text-text-muted' : ''}`}
+              >
+                {!availableImageModels.includes(customModel) && customModel && (
+                  <option value="" disabled>{customModel} (自定义)</option>
+                )}
+                {availableImageModels.length === 0 && (
+                  <option value="" disabled>点击刷新按钮获取模型列表</option>
+                )}
+                {availableImageModels.map((id) => (
+                  <option key={id} value={id}>{id}</option>
+                ))}
+              </select>
               <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
-              {availableImageModels.length > 0 && (
-                <datalist id="image-models-list">
-                  {availableImageModels.map((id) => (
-                    <option key={id} value={id} />
-                  ))}
-                </datalist>
-              )}
             </div>
+            {/* 自定义模型输入（仅当需要输入列表外的模型时使用） */}
+            <input
+              type="text"
+              placeholder="或手动输入自定义模型名..."
+              className={`${inputBaseStyles} mt-1.5 text-xs`}
+              onBlur={(e) => e.target.value.trim() && setCustomModel(e.target.value.trim())}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  const val = (e.target as HTMLInputElement).value.trim();
+                  if (val) {
+                    setCustomModel(val);
+                    (e.target as HTMLInputElement).value = '';
+                  }
+                }
+              }}
+            />
           </div>
 
           {/* 比例 + 尺寸（一行两列） */}
@@ -1406,113 +1549,59 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             </div>
           )}
 
-          {/* 模式切换 (分段控制器 - Aurora 风格) */}
-          <div className="mb-3">
-            <label className="text-xs text-text-muted mb-2 block font-medium">生成模式</label>
-            <div className="bg-slate border border-ash rounded-[var(--radius-md)] p-1 flex relative">
-              <button
-                type="button"
-                onClick={() => setBatchModeEnabled(false)}
-                disabled={isGenerating}
-                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
-                  !batchModeEnabled
-                    ? 'text-obsidian'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                普通生成
-              </button>
-              <button
-                type="button"
-                onClick={() => setBatchModeEnabled(true)}
-                disabled={isGenerating}
-                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
-                  batchModeEnabled
-                    ? 'text-obsidian'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                批量任务
-              </button>
-              <div
-                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-banana-500 rounded-[var(--radius-sm)] shadow-[var(--shadow-lifted)] transition-all duration-300 ease-spring ${
-                  batchModeEnabled ? 'left-[calc(50%+2px)]' : 'left-1'
-                }`}
-              />
+          {/* 批量任务配置 */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">并发数</label>
+              <div className="relative">
+                <select
+                  value={batchConfig.concurrency}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                    setBatchConfig((prev) => ({ ...prev, concurrency: v }));
+                  }}
+                  className={selectSmallStyles}
+                  disabled={isGenerating}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">每提示词</label>
+              <div className="relative">
+                <select
+                  value={batchConfig.countPerPrompt}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                    setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
+                  }}
+                  className={selectSmallStyles}
+                  disabled={isGenerating}
+                >
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
             </div>
           </div>
 
-          {/* 模式内容区 */}
-          {batchModeEnabled ? (
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">并发数</label>
-                <div className="relative">
-                  <select
-                    value={batchConfig.concurrency}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
-                      setBatchConfig((prev) => ({ ...prev, concurrency: v }));
-                    }}
-                    className={selectSmallStyles}
-                    disabled={isGenerating}
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">每提示词</label>
-                <div className="relative">
-                  <select
-                    value={batchConfig.countPerPrompt}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
-                      setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
-                    }}
-                    className={selectSmallStyles}
-                    disabled={isGenerating}
-                  >
-                    {[1, 2, 3, 4].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">生成数量</label>
-              <div className="aurora-count-buttons">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setParams({ ...params, count: n })}
-                    className={`aurora-count-btn ${params.count === n ? 'active' : ''}`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* 生成按钮 */}
           <div className="mt-auto space-y-1">
-            {batchModeEnabled && batchPromptCount > 0 && (
+            {batchPromptCount > 0 && (
               <span className="text-xs text-banana-500 text-center block">
-                批量模式：{batchPromptCount} 个任务
+                提示词:{batchPromptCount}，每提示词:{safePreviewCountPerPrompt} 图片数{batchPromptCount * safePreviewCountPerPrompt}
               </span>
             )}
             <button
-              onClick={isGenerating ? (batchModeEnabled ? handleBatchStop : handleStop) : (batchModeEnabled ? handleBatchGenerate : handleGenerate)}
+              onClick={isGenerating ? handleBatchStop : handleBatchGenerate}
               disabled={!isGenerating && !canGenerate}
               className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
             >
@@ -1521,15 +1610,10 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>停止</span>
                 </>
-              ) : batchModeEnabled ? (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>批量生成</span>
-                </>
               ) : (
                 <>
                   <Sparkles className="w-5 h-5" />
-                  <span>生成 ×{params.count}</span>
+                  <span>生成</span>
                 </>
               )}
             </button>

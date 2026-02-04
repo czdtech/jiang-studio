@@ -33,20 +33,20 @@ const ToastItem: React.FC<ToastItemProps> = ({ toast, onRemove }) => {
   }, [onRemove]);
 
   const icons = {
-    error: <AlertCircle className="w-5 h-5 text-red-400" />,
-    success: <CheckCircle className="w-5 h-5 text-green-400" />,
-    info: <Info className="w-5 h-5 text-blue-400" />,
+    error: <AlertCircle className="w-5 h-5 text-error" />,
+    success: <CheckCircle className="w-5 h-5 text-success" />,
+    info: <Info className="w-5 h-5 text-info" />,
   };
 
   const borders = {
-    error: 'border-red-500/50',
-    success: 'border-green-500/50',
-    info: 'border-blue-500/50',
+    error: 'border-error/40',
+    success: 'border-success/40',
+    info: 'border-info/40',
   };
 
   return (
     <div
-      className={`flex items-start gap-3 bg-graphite border ${borders[toast.type]} rounded-[14px] p-4 shadow-[var(--shadow-floating)] backdrop-blur-sm animate-slide-in max-w-md`}
+      className={`flex items-start gap-3 bg-graphite border ${borders[toast.type]} rounded-[var(--radius-lg)] p-4 shadow-[var(--shadow-floating)] backdrop-blur-sm animate-slide-in max-w-md`}
     >
       {icons[toast.type]}
       <p className="flex-1 text-sm text-white">{toast.message}</p>

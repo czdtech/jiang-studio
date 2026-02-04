@@ -19,6 +19,7 @@ import { optimizeUserPrompt } from '../services/mcp';
 import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid } from './ImageGrid';
+import { BatchImageGrid } from './BatchImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { SamplePromptChips } from './SamplePromptChips';
@@ -205,9 +206,9 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   // 批量任务状态
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
   const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
-  const [batchModeEnabled, setBatchModeEnabled] = useState(false); // 手动开关：是否启用批量模式
   const batchAbortRef = useRef(false);
   const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
+  const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
 
   // 应用当前供应商配置 + 加载草稿
   useEffect(() => {
@@ -325,12 +326,12 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   };
 
   const handleCreateProvider = async () => {
-    const base = activeProvider || createDefaultProvider();
+    const base = createDefaultProvider();
     const now = Date.now();
     const created: ProviderProfile = {
       ...base,
       id: crypto.randomUUID(),
-      name: base ? `复制 - ${base.name}` : '新供应商',
+      name: '新供应商',
       favorite: false,
       createdAt: now,
       updatedAt: now,
@@ -477,17 +478,66 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   };
 
   // 解析多行提示词为批量任务
+  /**
+   * 解析多行提示词为批量任务
+   * - 使用 --- 分隔符明确区分多个提示词
+   * - JSON/结构化文本自动识别为单个提示词
+   * - 普通多行文本按行分割
+   */
   const parsePromptsToBatch = (text: string): string[] => {
-    return text
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line.length > 0);
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+
+    // 1. 优先检测是否使用了分隔符 ---
+    if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
+      return trimmed
+        .split(/\n-{3,}\n?/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
+
+    // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return [trimmed];
+    }
+
+    // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
+    const lines = trimmed.split('\n');
+    const hasStructuredContent = lines.some(
+      (line) =>
+        line.startsWith('  ') ||
+        line.startsWith('\t') ||
+        /^\s*["'{[]/.test(line)
+    );
+
+    if (hasStructuredContent) {
+      return [trimmed];
+    }
+
+    // 4. 默认按行分割
+    return lines.map((line) => line.trim()).filter((line) => line.length > 0);
   };
 
   // 批量模式下的任务数（用于 UI 显示）
   const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
   const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
-  const batchPromptCount = batchModeEnabled ? Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount) : 0;
+  const batchPromptCount = Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount);
+  const selectedBatchImages = useMemo(() => {
+    if (selectedBatchImageIds.length === 0) return [];
+    const idSet = new Set(selectedBatchImageIds);
+    return batchTasks
+      .flatMap((t) => t.images || [])
+      .filter((img) => idSet.has(img.id));
+  }, [batchTasks, selectedBatchImageIds]);
+
+  useEffect(() => {
+    if (batchTasks.length === 0) {
+      setSelectedBatchImageIds([]);
+      return;
+    }
+    const availableIds = new Set(batchTasks.flatMap((t) => t.images || []).map((img) => img.id));
+    setSelectedBatchImageIds((prev) => prev.filter((id) => availableIds.has(id)));
+  }, [batchTasks]);
 
   // 批量生成处理
   const handleBatchGenerate = async () => {
@@ -527,6 +577,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     generateLockRef.current = true;
     setIsGenerating(true);
     setGeneratedImages([]);
+    setSelectedBatchImageIds([]);
 
     let successCount = 0;
     const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
@@ -694,6 +745,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     setBatchTasks([]);
     setIsBatchMode(false);
     setGeneratedImages([]);
+    setSelectedBatchImageIds([]);
   };
 
   const handleBatchDownloadAll = async () => {
@@ -703,6 +755,17 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
     try {
       const n = await downloadImagesSequentially(images, { delayMs: 140 });
+      showToast(`已开始下载 ${n} 张`, 'success');
+    } catch (e) {
+      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    }
+  };
+
+  const handleBatchDownloadSelected = async () => {
+    if (isGenerating) return;
+    if (selectedBatchImages.length === 0) return;
+    try {
+      const n = await downloadImagesSequentially(selectedBatchImages, { delayMs: 140 });
       showToast(`已开始下载 ${n} 张`, 'success');
     } catch (e) {
       showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
@@ -741,14 +804,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     // 清空 input value，允许重复上传相同文件
     e.target.value = '';
   };
-
-  // 切换生成模式时重置状态
-  useEffect(() => {
-    if (!batchModeEnabled && isBatchMode) {
-      setBatchTasks([]);
-      setIsBatchMode(false);
-    }
-  }, [batchModeEnabled, isBatchMode]);
 
   // 切换模型时裁剪参考图
   useEffect(() => {
@@ -877,14 +932,16 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
             </div>
             <span className="aurora-badge aurora-badge-gold">Nano Banana Pro</span>
           </div>
-          <div className="aurora-canvas-body">
+          <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
             {/* 批量模式进度条 */}
             {isBatchMode && batchTasks.length > 0 && (
               <div className="aurora-batch-progress">
                 <div className="flex items-center justify-between mb-2 gap-2">
-                  <span className="text-sm text-text-secondary">
-                    批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
-                  </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm text-text-secondary whitespace-nowrap">
+                      批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="flex gap-2 text-xs">
                       <span className="text-success">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
@@ -903,42 +960,50 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                     {!isGenerating &&
                       batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
                       batchTasks.some(t => (t.images?.length || 0) > 0) && (
-                        <button
-                          type="button"
-                          onClick={() => void handleBatchDownloadAll()}
-                        className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
-                        >
-                          下载全部
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void handleBatchDownloadAll()}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
+                          >
+                            下载全部
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleBatchDownloadSelected()}
+                            disabled={selectedBatchImages.length === 0}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
+                          >
+                            下载选中
+                          </button>
+                        </>
                       )}
                   </div>
                 </div>
-                <div className="aurora-batch-items">
-                  {batchTasks.map((task, idx) => (
-                    <div
-                      key={task.id}
-                      className={`aurora-batch-item ${
-                        task.status === 'success' ? 'success' :
-                        task.status === 'error' ? 'error' :
-                        task.status === 'running' ? 'running' :
-                        'pending'
-                      }`}
-                      title={task.prompt}
-                    >
-                      {idx + 1}
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
-            <ImageGrid
-              images={generatedImages}
-              isGenerating={isGenerating}
-              params={params}
-              expectedCount={isBatchMode ? batchPromptCount * safePreviewCountPerPrompt : undefined}
-              onImageClick={onImageClick}
-              onEdit={onEdit}
-            />
+            {isBatchMode ? (
+              <BatchImageGrid
+                tasks={batchTasks}
+                countPerPrompt={safePreviewCountPerPrompt}
+                selectedImageIds={selectedBatchImageIds}
+                onToggleSelect={(id) => {
+                  setSelectedBatchImageIds((prev) =>
+                    prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+                  );
+                }}
+                onImageClick={onImageClick}
+                onEdit={onEdit}
+              />
+            ) : (
+              <ImageGrid
+                images={generatedImages}
+                isGenerating={isGenerating}
+                params={params}
+                onImageClick={onImageClick}
+                onEdit={onEdit}
+              />
+            )}
           </div>
         </div>
 
@@ -1113,112 +1178,59 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
             </div>
           </div>
 
-          {/* 模式切换 (分段控制器 - Aurora 风格) */}
-          <div className="mb-3">
-            <label className="text-xs text-text-muted mb-2 block font-medium">生成模式</label>
-            <div className="bg-slate border border-ash rounded-[var(--radius-md)] p-1 flex relative">
-              <button
-                onClick={() => setBatchModeEnabled(false)}
-                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
-                  !batchModeEnabled
-                    ? 'text-obsidian'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                }`}
-              >
-                普通生成
-              </button>
-              <button
-                onClick={() => setBatchModeEnabled(true)}
-                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
-                  batchModeEnabled
-                    ? 'text-obsidian'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                }`}
-              >
-                批量任务
-              </button>
-              
-              {/* 滑动背景块 (使用 absolute 定位实现平滑切换效果) */}
-              <div 
-                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-banana-500 rounded-[var(--radius-sm)] shadow-[var(--shadow-lifted)] transition-all duration-300 ease-spring ${
-                  batchModeEnabled ? 'left-[calc(50%+2px)]' : 'left-1'
-                }`}
-              />
+          {/* 批量任务配置 */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">并发数</label>
+              <div className="relative">
+                <select
+                  value={batchConfig.concurrency}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                    setBatchConfig((prev) => ({ ...prev, concurrency: v }));
+                  }}
+                  className={selectSmallStyles}
+                  disabled={isGenerating}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">每提示词</label>
+              <div className="relative">
+                <select
+                  value={batchConfig.countPerPrompt}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                    setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
+                  }}
+                  className={selectSmallStyles}
+                  disabled={isGenerating}
+                >
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
             </div>
           </div>
 
-          {/* 模式内容区 */}
-          {batchModeEnabled ? (
-            /* 批量任务配置 */
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">并发数</label>
-                <div className="relative">
-                  <select
-                    value={batchConfig.concurrency}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
-                      setBatchConfig((prev) => ({ ...prev, concurrency: v }));
-                    }}
-                    className={selectSmallStyles}
-                    disabled={isGenerating}
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">每提示词</label>
-                <div className="relative">
-                  <select
-                    value={batchConfig.countPerPrompt}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
-                      setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
-                    }}
-                    className={selectSmallStyles}
-                    disabled={isGenerating}
-                  >
-                    {[1, 2, 3, 4].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* 普通生成配置 */
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">生成数量</label>
-              <div className="aurora-count-buttons">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    onClick={() => setParams({ ...params, count: n })}
-                    className={`aurora-count-btn ${params.count === n ? 'active' : ''}`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* 生成按钮 */}
           <div className="mt-auto space-y-1">
-            {batchModeEnabled && batchPromptCount > 0 && (
+            {batchPromptCount > 0 && (
               <span className="text-xs text-banana-500 text-center block">
-                批量模式：{batchPromptCount} 个任务
+                提示词:{batchPromptCount}，每提示词:{safePreviewCountPerPrompt}， 图片数{batchPromptCount * safePreviewCountPerPrompt}
               </span>
             )}
             <button
-              onClick={isGenerating ? (batchModeEnabled ? handleBatchStop : handleStop) : (batchModeEnabled ? handleBatchGenerate : handleGenerate)}
+              onClick={isGenerating ? handleBatchStop : handleBatchGenerate}
               disabled={!isGenerating && !canGenerate}
               className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
             >
@@ -1227,15 +1239,10 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>停止</span>
                 </>
-              ) : batchModeEnabled ? (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>批量生成</span>
-                </>
               ) : (
                 <>
                   <Sparkles className="w-5 h-5" />
-                  <span>生成 ×{params.count}</span>
+                  <span>生成</span>
                 </>
               )}
             </button>

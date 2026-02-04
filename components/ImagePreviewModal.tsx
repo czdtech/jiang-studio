@@ -15,6 +15,9 @@ export const ImagePreviewModal = ({
 }: ImagePreviewModalProps) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [resolvedObjectUrl, setResolvedObjectUrl] = useState<string | null>(null);
+  
+  // 用于跟踪当前有效的 Blob URL，确保切换图片时不会使用已释放的 URL
+  const objectUrlRef = React.useRef<string | null>(null);
 
   useEffect(() => {
     if (!data) return;
@@ -23,26 +26,47 @@ export const ImagePreviewModal = ({
     setCurrentIndex(clamped);
   }, [data]);
 
+  // 当 currentIndex 改变时，立即清空 resolvedObjectUrl 并释放旧的 Blob URL
+  // 这样可以避免在渲染时使用已释放的 URL
+  const handleIndexChange = React.useCallback((newIndex: number | ((prev: number) => number)) => {
+    // 先释放旧的 Blob URL
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+    // 清空状态，让组件先显示缩略图
+    setResolvedObjectUrl(null);
+    // 更新 index
+    setCurrentIndex(newIndex);
+  }, []);
+
   useEffect(() => {
-    if (!data || data.images.length === 0) return;
+    if (!data || data.images.length === 0) {
+      setResolvedObjectUrl(null);
+      return;
+    }
 
     const safeIndex = Math.max(0, Math.min(currentIndex, data.images.length - 1));
     const img = data.images[safeIndex];
 
     let cancelled = false;
-    let objectUrl: string | null = null;
 
     const load = async () => {
       if (!img?.fileHandle) {
-        setResolvedObjectUrl(null);
         return;
       }
       try {
         const file = await img.fileHandle.getFile();
-        objectUrl = URL.createObjectURL(file);
-        if (!cancelled) setResolvedObjectUrl(objectUrl);
+        const newObjectUrl = URL.createObjectURL(file);
+        if (!cancelled) {
+          objectUrlRef.current = newObjectUrl;
+          setResolvedObjectUrl(newObjectUrl);
+        } else {
+          // 如果已取消，立即释放新创建的 URL
+          URL.revokeObjectURL(newObjectUrl);
+        }
       } catch {
-        if (!cancelled) setResolvedObjectUrl(null);
+        // 加载失败时保持使用缩略图
       }
     };
 
@@ -50,20 +74,30 @@ export const ImagePreviewModal = ({
 
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      // 注意：不在这里释放 URL，由 handleIndexChange 或组件卸载时处理
     };
   }, [data, currentIndex]);
+  
+  // 组件卸载时释放 Blob URL
+  useEffect(() => {
+    return () => {
+      if (objectUrlRef.current) {
+        URL.revokeObjectURL(objectUrlRef.current);
+        objectUrlRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!data) return;
       if (e.key === 'Escape') onClose();
-      if (e.key === 'ArrowRight' && currentIndex < data.images.length - 1) setCurrentIndex(i => i + 1);
-      if (e.key === 'ArrowLeft' && currentIndex > 0) setCurrentIndex(i => i - 1);
+      if (e.key === 'ArrowRight' && currentIndex < data.images.length - 1) handleIndexChange(i => i + 1);
+      if (e.key === 'ArrowLeft' && currentIndex > 0) handleIndexChange(i => i - 1);
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [data, currentIndex, onClose]);
+  }, [data, currentIndex, onClose, handleIndexChange]);
 
   if (!data) return null;
 
@@ -76,7 +110,10 @@ export const ImagePreviewModal = ({
   const hasNext = safeIndex < data.images.length - 1;
   const hasPrev = safeIndex > 0;
 
-  const displayUrl = resolvedObjectUrl || currentImage.base64;
+  // 优先使用高清图（resolvedObjectUrl），否则使用缩略图（base64）
+  // 如果 base64 是 blob URL 或 http URL（可能已失效），使用占位符
+  const fallbackUrl = currentImage.base64?.startsWith('data:') ? currentImage.base64 : '';
+  const displayUrl = resolvedObjectUrl || fallbackUrl;
   const downloadName = currentImage.fileName || `nano-banana-${currentImage.id}.png`;
 
   return (
@@ -117,7 +154,7 @@ export const ImagePreviewModal = ({
        <div className="flex-1 relative min-h-0 w-full flex items-center justify-center p-4 overflow-hidden">
           {hasPrev && (
             <button 
-              onClick={() => setCurrentIndex((i) => Math.max(0, i - 1))}
+              onClick={() => handleIndexChange((i) => Math.max(0, i - 1))}
               aria-label="上一张"
               className="absolute left-4 p-3 bg-black/50 hover:bg-banana-500 text-white hover:text-black rounded-full transition-colors z-20"
             >
@@ -133,7 +170,7 @@ export const ImagePreviewModal = ({
 
           {hasNext && (
             <button 
-              onClick={() => setCurrentIndex((i) => Math.min(data.images.length - 1, i + 1))}
+              onClick={() => handleIndexChange((i) => Math.min(data.images.length - 1, i + 1))}
               aria-label="下一张"
               className="absolute right-4 p-3 bg-black/50 hover:bg-banana-500 text-white hover:text-black rounded-full transition-colors z-20"
             >
@@ -145,7 +182,12 @@ export const ImagePreviewModal = ({
        {/* Bottom Info Area */}
        <div className="shrink-0 p-6 bg-dark-surface/60 backdrop-blur-sm border-t border-dark-border">
           <p className="text-white text-base md:text-lg max-w-4xl mx-auto text-center">{currentImage.prompt}</p>
-          <p className="text-gray-500 text-xs mt-2 text-center">{new Date(currentImage.timestamp).toLocaleString()}</p>
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs text-gray-400">
+            <span>模型：{currentImage.model || '-'}</span>
+            <span>尺寸：{currentImage.params.imageSize || 'STD'}</span>
+            <span>比例：{currentImage.params.aspectRatio || 'auto'}</span>
+            <span>时间：{new Date(currentImage.timestamp).toLocaleString()}</span>
+          </div>
        </div>
     </div>
   );

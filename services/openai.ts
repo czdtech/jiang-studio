@@ -20,6 +20,32 @@ import {
 } from './shared';
 
 const MAX_CONCURRENCY = 2;
+const REQUEST_TIMEOUT_MS = 60000;
+
+const createTimeoutSignal = (signal?: AbortSignal, timeoutMs?: number) => {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return { signal, cleanup: () => {}, didTimeout: () => false };
+  }
+
+  let timedOut = false;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    },
+    didTimeout: () => timedOut,
+  };
+};
 
 /** 从文本中提取图像 data URL/链接 */
 const extractImageFromText = (text: string): string | null => {
@@ -82,6 +108,99 @@ const buildMessageContent = (params: GenerationParams): OpenAIContentPart[] => {
   return content;
 };
 
+const parseAspectRatioValue = (ratio?: string): number | null => {
+  if (!ratio || ratio === 'auto') return null;
+  const parts = ratio.split(':').map((p) => Number(p));
+  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)) || parts[1] === 0) return null;
+  return parts[0] / parts[1];
+};
+
+const mapOpenAIImageSize = (imageSize?: string, aspectRatio?: string): string | undefined => {
+  if (!imageSize) return undefined;
+  if (/^\d+x\d+$/i.test(imageSize)) return imageSize;
+
+  const normalized = imageSize.toUpperCase();
+  if (!['1K', '2K', '4K'].includes(normalized)) return imageSize;
+
+  const ratio = parseAspectRatioValue(aspectRatio);
+  const isLandscape = ratio !== null && ratio > 1.05;
+  const isPortrait = ratio !== null && ratio < 0.95;
+
+  if (normalized === '1K') {
+    if (isPortrait) return '1024x1536';
+    if (isLandscape) return '1536x1024';
+    return '1024x1024';
+  }
+
+  const base = normalized === '2K' ? 2048 : 4096;
+  if (isPortrait) return `${base}x${Math.round(base * 1.5)}`;
+  if (isLandscape) return `${Math.round(base * 1.5)}x${base}`;
+  return `${base}x${base}`;
+};
+
+const isInvalidSizeError = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /不合法的size|invalid\s+size/i.test(msg);
+};
+
+const isInvalidResponseFormatError = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /不合法的response_format|invalid\s+response_format/i.test(msg);
+};
+
+const isEndpointUnsupported = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /API error (404|405|501)/i.test(msg) || /not\s+found|not\s+supported/i.test(msg);
+};
+
+const isGeminiModel = (model: string): boolean => model.toLowerCase().startsWith('gemini-');
+
+const buildGeminiContents = (params: GenerationParams): Array<{ role?: string; parts: Array<Record<string, unknown>> }> => {
+  const parts: Array<Record<string, unknown>> = [];
+
+  if (params.referenceImages && params.referenceImages.length > 0) {
+    for (const imgData of params.referenceImages) {
+      parts.push({
+        inlineData: {
+          data: cleanBase64(imgData),
+          mimeType: 'image/png',
+        },
+      });
+    }
+    parts.push({ text: `Generate an image based on these references: ${params.prompt}` });
+  } else {
+    parts.push({ text: params.prompt });
+  }
+
+  return [{ role: 'user', parts }];
+};
+
+const buildGeminiImageConfig = (params: GenerationParams): ImageConfig => {
+  const config: ImageConfig = { aspectRatio: params.aspectRatio };
+  if (params.model !== ModelType.NANO_BANANA && params.imageSize) {
+    config.imageSize = params.imageSize;
+  }
+  return config;
+};
+
+const extractGeminiImageFromResponse = (
+  response: { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }> },
+  params: GenerationParams
+): GeneratedImage | null => {
+  const parts = response.candidates?.[0]?.content?.parts;
+  if (!parts) return null;
+
+  for (const part of parts) {
+    if (part.inlineData?.data) {
+      const mimeType = part.inlineData.mimeType || 'image/png';
+      const base64 = `data:${mimeType};base64,${part.inlineData.data}`;
+      return createGeneratedImage(base64, params);
+    }
+  }
+
+  return null;
+};
+
 /** 流式请求 OpenAI 兼容 API */
 const callStreamingAPI = async (
   baseUrl: string,
@@ -89,7 +208,8 @@ const callStreamingAPI = async (
   model: string,
   messages: Array<{ role: string; content: OpenAIContentPart[] }>,
   imageConfig?: ImageConfig,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { omitResponseFormat?: boolean }
 ): Promise<OpenAIResponse> => {
   const cleanBaseUrl = baseUrl.replace(/\/$/, '');
   const url = `${cleanBaseUrl}/v1/chat/completions`;
@@ -102,7 +222,9 @@ const callStreamingAPI = async (
   };
 
   if (imageConfig) {
-    body.response_format = { type: 'image' };
+    if (!options?.omitResponseFormat) {
+      body.response_format = { type: 'image' };
+    }
     if (imageConfig.aspectRatio) body.aspect_ratio = imageConfig.aspectRatio;
     if (imageConfig.imageSize) body.size = imageConfig.imageSize;
   }
@@ -111,15 +233,24 @@ const callStreamingAPI = async (
   console.log('Request body:', JSON.stringify(body, null, 2));
 
   throwIfAborted(signal);
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal,
-  });
+  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: timedSignal,
+    });
+  } catch (error) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw error;
+  } finally {
+    cleanup();
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -137,6 +268,190 @@ const callStreamingAPI = async (
   }
 
   return parseStreamResponse(response, signal);
+};
+
+const callImagesAPI = async (
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  prompt: string,
+  imageConfig?: ImageConfig,
+  signal?: AbortSignal
+): Promise<OpenAIResponse> => {
+  const cleanBaseUrl = baseUrl.replace(/\/$/, '');
+  const url = `${cleanBaseUrl}/v1/images/generations`;
+  const body: Record<string, unknown> = {
+    model,
+    prompt,
+    n: 1,
+  };
+
+  if (imageConfig?.imageSize) {
+    body.size = imageConfig.imageSize;
+  }
+
+  console.log('Images API URL:', url);
+  console.log('Images API body:', JSON.stringify(body, null, 2));
+
+  throwIfAborted(signal);
+  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: timedSignal,
+    });
+  } catch (error) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw error;
+  } finally {
+    cleanup();
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API error ${response.status}: ${errorText}`);
+  }
+
+  return (await response.json()) as OpenAIResponse;
+};
+
+const callGeminiRelayAPI = async (
+  params: GenerationParams,
+  settings: OpenAISettings,
+  signal?: AbortSignal
+): Promise<GeneratedImage> => {
+  const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
+  const url = `${cleanBaseUrl}/v1beta/models/${params.model}:generateContent`;
+  const contents = buildGeminiContents(params);
+  const imageConfig = buildGeminiImageConfig(params);
+  const body: Record<string, unknown> = {
+    contents,
+    generationConfig: {
+      responseModalities: ['IMAGE'],
+      imageConfig,
+    },
+  };
+
+  console.log('Gemini Relay URL:', url);
+  console.log('Gemini Relay body:', JSON.stringify(body, null, 2));
+
+  throwIfAborted(signal);
+  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: timedSignal,
+    });
+  } catch (error) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw error;
+  } finally {
+    cleanup();
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API error ${response.status}: ${errorText}`);
+  }
+
+  const result = (await response.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
+  };
+  const image = extractGeminiImageFromResponse(result, params);
+  if (image) return image;
+
+  console.log('Gemini Relay Response:', JSON.stringify(result, null, 2));
+  throw new Error('No image in Gemini relay response. Check browser console.');
+};
+
+const callGeminiChatRelayAPI = async (
+  params: GenerationParams,
+  settings: OpenAISettings,
+  signal?: AbortSignal
+): Promise<OpenAIResponse> => {
+  const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
+  const url = `${cleanBaseUrl}/v1/chat/completions`;
+  const contents = buildGeminiContents(params);
+  const imageConfig = buildGeminiImageConfig(params);
+  const body: Record<string, unknown> = {
+    model: params.model,
+    stream: true,
+    max_tokens: 8192,
+    messages: [{ role: 'user', content: params.prompt }],
+    contents,
+    extra_body: {
+      generationConfig: {
+        responseModalities: ['IMAGE'],
+        imageConfig,
+      },
+    },
+  };
+
+  console.log('Gemini Chat Relay URL:', url);
+  console.log('Gemini Chat Relay body:', JSON.stringify(body, null, 2));
+
+  throwIfAborted(signal);
+  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: timedSignal,
+    });
+  } catch (error) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw error;
+  } finally {
+    cleanup();
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API error ${response.status}: ${errorText}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  if (contentType.includes('application/json')) {
+    return (await response.json()) as OpenAIResponse;
+  }
+
+  return parseStreamResponse(response, signal);
+};
+
+const requestGeminiChatImage = async (
+  params: GenerationParams,
+  settings: OpenAISettings,
+  signal?: AbortSignal
+): Promise<GeneratedImage> => {
+  const result = await callGeminiChatRelayAPI(params, settings, signal);
+  const image = extractImageFromResponse(result, params);
+  if (image) {
+    return finalizeImage(image, signal);
+  }
+
+  const responseContent = result.choices?.[0]?.message?.content;
+  if (responseContent && typeof responseContent === 'string' && responseContent.length > 0) {
+    throw new Error(`Gemini chat relay returned text: ${responseContent.substring(0, 120)}`);
+  }
+
+  throw new Error('No image in Gemini chat relay response. Check browser console.');
 };
 
 /** 解析 SSE 流响应 */
@@ -277,6 +592,121 @@ const parseStreamResponse = async (response: Response, signal?: AbortSignal): Pr
   };
 };
 
+const requestImageResponse = async (
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  messages: Array<{ role: string; content: OpenAIContentPart[] }>,
+  imageConfig?: ImageConfig,
+  signal?: AbortSignal
+): Promise<OpenAIResponse> => {
+  const requestOnce = (cfg?: ImageConfig, omitResponseFormat?: boolean) =>
+    callStreamingAPI(baseUrl, apiKey, model, messages, cfg, signal, { omitResponseFormat });
+
+  const requestWithSizeFallback = async (cfg?: ImageConfig, omitResponseFormat?: boolean) => {
+    try {
+      return await requestOnce(cfg, omitResponseFormat);
+    } catch (error) {
+      if (!cfg?.imageSize || !isInvalidSizeError(error)) {
+        throw error;
+      }
+
+      const mappedSize = mapOpenAIImageSize(cfg.imageSize, cfg.aspectRatio);
+      if (mappedSize && mappedSize !== cfg.imageSize) {
+        try {
+          return await requestOnce({ ...cfg, imageSize: mappedSize }, omitResponseFormat);
+        } catch (retryError) {
+          if (!isInvalidSizeError(retryError)) throw retryError;
+          const { imageSize: _omit, ...rest } = cfg;
+          const fallback = Object.keys(rest).length > 0 ? rest : undefined;
+          return await requestOnce(fallback, omitResponseFormat);
+        }
+      }
+
+      const { imageSize: _omit, ...rest } = cfg;
+      const fallback = Object.keys(rest).length > 0 ? rest : undefined;
+      return await requestOnce(fallback, omitResponseFormat);
+    }
+  };
+
+  const extractPromptText = () => {
+    const parts: string[] = [];
+    for (const msg of messages) {
+      const content = msg.content;
+      if (typeof content === 'string') {
+        if (content.trim()) parts.push(content.trim());
+        continue;
+      }
+      for (const part of content) {
+        if (part.type === 'text' && part.text?.trim()) parts.push(part.text.trim());
+      }
+    }
+    return parts.join('\n').trim();
+  };
+
+  const hasImageInput = messages.some(
+    (msg) =>
+      Array.isArray(msg.content) &&
+      msg.content.some((part) => part.type === 'image_url' && part.image_url?.url)
+  );
+
+  const preferImagesEndpoint = !hasImageInput;
+
+  const requestImagesWithSizeFallback = async (cfg?: ImageConfig) => {
+    const promptText = extractPromptText();
+    if (!promptText) throw new Error('无法从请求中提取提示词');
+
+    const requestImagesOnce = async (nextCfg?: ImageConfig) => {
+      const imageSize = nextCfg?.imageSize
+        ? mapOpenAIImageSize(nextCfg.imageSize, nextCfg.aspectRatio) ?? nextCfg.imageSize
+        : undefined;
+      const finalCfg = imageSize ? { ...nextCfg, imageSize } : nextCfg;
+      return await callImagesAPI(baseUrl, apiKey, model, promptText, finalCfg, signal);
+    };
+
+    try {
+      return await requestImagesOnce(cfg);
+    } catch (error) {
+      if (!cfg?.imageSize || !isInvalidSizeError(error)) throw error;
+      const mappedSize = mapOpenAIImageSize(cfg.imageSize, cfg.aspectRatio);
+      if (mappedSize && mappedSize !== cfg.imageSize) {
+        try {
+          return await requestImagesOnce({ ...cfg, imageSize: mappedSize });
+        } catch (retryError) {
+          if (!isInvalidSizeError(retryError)) throw retryError;
+        }
+      }
+      const { imageSize: _omit, ...rest } = cfg;
+      const fallback = Object.keys(rest).length > 0 ? rest : undefined;
+      return await requestImagesOnce(fallback);
+    }
+  };
+
+  if (preferImagesEndpoint) {
+    try {
+      return await requestImagesWithSizeFallback(imageConfig);
+    } catch (error) {
+      if (!isEndpointUnsupported(error)) throw error;
+    }
+  }
+
+  try {
+    return await requestWithSizeFallback(imageConfig, false);
+  } catch (error) {
+    if (!isInvalidResponseFormatError(error)) throw error;
+    try {
+      return await requestWithSizeFallback(imageConfig, true);
+    } catch (retryError) {
+      try {
+        return await requestWithSizeFallback(undefined, true);
+      } catch (fallbackError) {
+        if (hasImageInput) throw fallbackError;
+        return await requestImagesWithSizeFallback(imageConfig);
+      }
+    }
+  }
+};
+
 /** 从消息中提取图像 */
 const extractImageFromMessage = (message?: OpenAIMessage): string | null => {
   if (!message?.content) return null;
@@ -387,6 +817,15 @@ const generateSingle = async (
   signal?: AbortSignal,
   imageConfigOverride?: ImageConfig
 ): Promise<GeneratedImage> => {
+  if (isGeminiModel(params.model)) {
+    const shouldUseNativeRelay =
+      settings.baseUrl.includes('generativelanguage.googleapis.com') || settings.baseUrl.includes('/v1beta');
+    if (shouldUseNativeRelay) {
+      return await callGeminiRelayAPI(params, settings, signal);
+    }
+    return await requestGeminiChatImage(params, settings, signal);
+  }
+
   const content = buildMessageContent(params);
   const messages = [{ role: 'user', content }];
 
@@ -398,7 +837,7 @@ const generateSingle = async (
     return cfg;
   })();
 
-  const result = await callStreamingAPI(
+  const result = await requestImageResponse(
     settings.baseUrl,
     settings.apiKey,
     params.model,
@@ -551,7 +990,14 @@ export const editImage = async (
 
   console.log('Edit request - Model:', model, 'Instruction:', instruction);
 
-  const result = await callStreamingAPI(settings.baseUrl, settings.apiKey, model, messages, imageConfig, signal);
+  const result = await requestImageResponse(
+    settings.baseUrl,
+    settings.apiKey,
+    model,
+    messages,
+    imageConfig,
+    signal
+  );
 
   const editParams: GenerationParams = {
     prompt: instruction,

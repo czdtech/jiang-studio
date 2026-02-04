@@ -1,9 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { Edit, X, ArrowRight } from 'lucide-react';
+import { Edit, X, ArrowRight, ChevronDown } from 'lucide-react';
 import { GeneratedImage, ModelType, GenerationParams } from '../types';
 import { uploadImageFile, deleteImageFile } from '../services/gemini';
 import { getProviders, getActiveProviderId } from '../services/db';
 import { useToast } from './Toast';
+
+/** Kie 支持编辑的模型列表 */
+const KIE_EDIT_MODELS = [
+  { id: 'google/nano-banana-edit', label: 'Nano Banana Edit（专用编辑模型）' },
+  { id: 'google/nano-banana-pro', label: 'Nano Banana Pro（高质量，支持编辑）' },
+];
 
 /** 编辑函数类型 */
 export type EditImageFn = (
@@ -34,12 +40,18 @@ export const EditorModal = ({
   const [isLoadingSource, setIsLoadingSource] = useState(false);
   const [currentView, setCurrentView] = useState<GeneratedImage | null>(image);
   const [uploadedFileInfo, setUploadedFileInfo] = useState<{ uri: string; name: string } | null>(null);
+  // Kie 编辑模型选择
+  const [kieEditModel, setKieEditModel] = useState(KIE_EDIT_MODELS[0].id);
   const { showToast } = useToast();
+
+  const isKieSource = image?.sourceScope === 'kie';
 
   useEffect(() => {
     setCurrentView(image);
     setPrompt('');
     setUploadedFileInfo(null); // 重置文件信息
+    // 重置 Kie 编辑模型为默认值
+    setKieEditModel(KIE_EDIT_MODELS[0].id);
 
     if (!image?.fileHandle) return;
 
@@ -153,10 +165,12 @@ export const EditorModal = ({
     if (isLoadingSource) return;
     setIsProcessing(true);
     try {
+      // Kie 来源使用选择的编辑模型，其他使用原图模型
+      const editModel = isKieSource ? kieEditModel : (image.params.model as ModelType);
       const result = await onEditImage(
         currentView.base64,
         prompt,
-        image.params.model as ModelType,
+        editModel as ModelType,
         currentView.params,
         uploadedFileInfo || undefined // 传递文件信息（如果有）
       );
@@ -217,15 +231,15 @@ export const EditorModal = ({
 
         {/* Chat/Controls Area (Bottom) */}
         <div className="h-64 bg-dark-surface border-t border-dark-border flex flex-col shrink-0 shadow-[0_-5px_20px_rgba(0,0,0,0.5)] z-20">
-          <div className="flex-1 overflow-y-auto p-4 space-y-3">
-            <div className="bg-dark-bg p-3 rounded-lg border border-dark-border max-w-2xl">
+          <div className="flex-1 overflow-y-auto p-4 space-y-3 flex flex-col items-center justify-center">
+            <div className="bg-dark-bg p-3 rounded-lg border border-dark-border max-w-2xl text-center">
               <p className="text-sm text-gray-300">
                 <span className="text-banana-500 font-bold">提示：</span> 描述你想怎么改。例：
                 “把天空变成紫色”、“给猫戴一顶帽子”。
               </p>
             </div>
             {currentView && currentView.prompt !== image.prompt && (
-              <div className="bg-banana-500/10 p-3 rounded-lg border border-banana-500/30 max-w-2xl">
+              <div className="bg-banana-500/10 p-3 rounded-lg border border-banana-500/30 max-w-2xl text-center">
                 <p className="text-sm text-banana-200">
                   <span className="font-bold">上一次编辑：</span> {currentView.prompt}
                 </p>
@@ -234,22 +248,43 @@ export const EditorModal = ({
           </div>
 
           <div className="p-4 border-t border-dark-border bg-dark-bg/50 backdrop-blur">
-            <div className="max-w-4xl mx-auto flex gap-2">
-              <input
-                type="text"
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !isProcessing && handleEdit()}
-                placeholder="描述你的修改…"
-                className="flex-1 bg-dark-bg border border-dark-border rounded-xl px-5 py-3 text-white focus:ring-2 focus:ring-banana-500 outline-none shadow-inner"
-              />
-              <button
-                onClick={handleEdit}
-                disabled={isProcessing || isLoadingSource || !prompt.trim()}
-                className="bg-banana-500 hover:bg-banana-600 disabled:opacity-50 text-black font-bold px-6 py-2 rounded-xl flex items-center gap-2 transition-transform active:scale-95"
-              >
-                发送 <ArrowRight className="w-4 h-4" />
-              </button>
+            <div className="max-w-4xl mx-auto space-y-3">
+              {/* Kie 模型选择器 */}
+              {isKieSource && (
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-gray-400 whitespace-nowrap">编辑模型：</label>
+                  <div className="relative flex-1 max-w-xs">
+                    <select
+                      value={kieEditModel}
+                      onChange={(e) => setKieEditModel(e.target.value)}
+                      className="w-full bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white text-sm focus:ring-2 focus:ring-banana-500 outline-none appearance-none cursor-pointer pr-8"
+                    >
+                      {KIE_EDIT_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+                  </div>
+                </div>
+              )}
+              {/* 输入框和发送按钮 */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !isProcessing && handleEdit()}
+                  placeholder="描述你的修改…"
+                  className="flex-1 bg-dark-bg border border-dark-border rounded-xl px-5 py-3 text-white focus:ring-2 focus:ring-banana-500 outline-none shadow-inner"
+                />
+                <button
+                  onClick={handleEdit}
+                  disabled={isProcessing || isLoadingSource || !prompt.trim()}
+                  className="bg-banana-500 hover:bg-banana-600 disabled:opacity-50 text-black font-bold px-6 py-2 rounded-xl flex items-center gap-2 transition-transform active:scale-95"
+                >
+                  发送 <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
             </div>
           </div>
         </div>

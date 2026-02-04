@@ -6,6 +6,7 @@ import { optimizeUserPrompt } from '../services/mcp';
 import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
+import { BatchImageGrid } from './BatchImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { RefImageRow } from './RefImageRow';
@@ -43,7 +44,7 @@ const createDefaultProvider = (): ProviderProfile => {
     name: 'Kie AI',
     apiKey: '',
     baseUrl: 'https://api.kie.ai',
-    defaultModel: 'nano-banana-pro',
+    defaultModel: 'google/nano-banana',
     favorite: true,
     createdAt: now,
     updatedAt: now,
@@ -130,23 +131,31 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
-  const [customModel, setCustomModel] = useState('nano-banana-pro');
+  const [customModel, setCustomModel] = useState('google/nano-banana');
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
 
-  // 模型列表
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [modelsHint, setModelsHint] = useState<string>('');
+  // Kie AI 预设模型列表（Kie AI 不支持 /v1/models 端点）
+  // 参考: https://kie.ai/nano-banana, https://kie.ai/nano-banana-pro, https://kie.ai/google/imagen4
+  const KIE_PRESET_MODELS = [
+    // Nano Banana 系列
+    { id: 'google/nano-banana', label: 'Nano Banana（Gemini 2.5 Flash 文生图）' },
+    { id: 'google/nano-banana-edit', label: 'Nano Banana Edit（图片编辑）' },
+    { id: 'google/nano-banana-pro', label: 'Nano Banana Pro（Gemini 3 Pro 高质量）' },
+    // Imagen 4 系列
+    { id: 'google/imagen-4', label: 'Imagen 4（平衡质量与速度）' },
+    { id: 'google/imagen-4-ultra', label: 'Imagen 4 Ultra（超快 2K 高清）' },
+    { id: 'google/imagen-4-fast', label: 'Imagen 4 Fast（快速生成）' },
+  ];
 
   // 批量任务状态
   const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
   const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
-  const [batchModeEnabled, setBatchModeEnabled] = useState(false); // 手动开关：是否启用批量模式
   const batchAbortRef = useRef(false);
   const batchAbortControllerRef = useRef<AbortController | null>(null);
   const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
+  const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
@@ -204,20 +213,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     setProviderName(activeProvider.name);
     setProviderFavorite(!!activeProvider.favorite);
 
-    // 加载模型缓存
-    const cache = activeProvider.modelsCache;
-    if (cache?.all?.length) {
-      setAvailableModels(cache.all);
-      const dt = new Date(cache.fetchedAt).toLocaleString();
-      setModelsHint(`已缓存模型列表（${cache.all.length}） • ${dt}`);
-    } else if (cache?.lastError) {
-      setAvailableModels([]);
-      setModelsHint(cache.lastError);
-    } else {
-      setAvailableModels([]);
-      setModelsHint('');
-    }
-
     const loadDraft = async () => {
       const draft = await getDraftFromDb(scope, activeProvider.id);
       if (cancelled) return;
@@ -230,7 +225,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           outputFormat: draft.params?.outputFormat || 'png',
         });
         setRefImages(draft.refImages || []);
-        setCustomModel(draft.model || activeProvider.defaultModel || 'nano-banana-pro');
+        setCustomModel(draft.model || activeProvider.defaultModel || 'google/nano-banana');
       } else {
         setPrompt('');
         setRefImages([]);
@@ -242,7 +237,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           count: 1,
           model: ModelType.CUSTOM,
         });
-        setCustomModel(activeProvider.defaultModel || 'nano-banana-pro');
+        setCustomModel(activeProvider.defaultModel || 'google/nano-banana');
       }
 
       isHydratingRef.current = false;
@@ -311,12 +306,12 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   };
 
   const handleCreateProvider = async () => {
-    const base = activeProvider || createDefaultProvider();
+    const base = createDefaultProvider();
     const now = Date.now();
     const created: ProviderProfile = {
       ...base,
       id: crypto.randomUUID(),
-      name: base ? `复制 - ${base.name}` : '新供应商',
+      name: '新供应商',
       favorite: false,
       createdAt: now,
       updatedAt: now,
@@ -350,84 +345,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   };
 
   const handleToggleFavorite = () => setProviderFavorite((v) => !v);
-
-  const handleRefreshModels = async () => {
-    if (!activeProvider) return;
-    if (!settings.baseUrl) {
-      showToast('请先填写 Base URL', 'error');
-      return;
-    }
-
-    setIsLoadingModels(true);
-    setModelsHint('');
-    try {
-      const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
-      const url = `${cleanBaseUrl}/v1/models`;
-
-      const headers: Record<string, string> = {};
-      if (settings.apiKey) {
-        headers.Authorization = `Bearer ${settings.apiKey}`;
-      }
-
-      const resp = await fetch(url, { method: 'GET', headers });
-      if (!resp.ok) {
-        const errText = await resp.text();
-        throw new Error(`API error ${resp.status}: ${errText}`);
-      }
-
-      const json = (await resp.json()) as { data?: unknown[] };
-      const raw = Array.isArray(json.data) ? json.data : [];
-
-      const ids = raw
-        .map((m) => (m && typeof m === 'object' ? (m as { id?: unknown }).id : undefined))
-        .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
-
-      const uniqueIds = Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
-      setAvailableModels(uniqueIds);
-
-      const modelsCache = {
-        all: uniqueIds,
-        fetchedAt: Date.now(),
-        lastError: undefined,
-      };
-
-      const updatedProvider: ProviderProfile = {
-        ...activeProvider,
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
-        modelsCache,
-        updatedAt: Date.now(),
-      };
-
-      await upsertProviderInDb(updatedProvider);
-      setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
-
-      setModelsHint(`已刷新模型列表（${uniqueIds.length}）`);
-      showToast('Models refreshed', 'success');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown';
-      const hint = `无法从 /v1/models 拉取模型列表：${msg}`;
-      setModelsHint(hint);
-
-      const updatedProvider: ProviderProfile = {
-        ...activeProvider,
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
-        modelsCache: {
-          all: activeProvider.modelsCache?.all || [],
-          fetchedAt: activeProvider.modelsCache?.fetchedAt || Date.now(),
-          lastError: hint,
-        },
-        updatedAt: Date.now(),
-      };
-      await upsertProviderInDb(updatedProvider);
-      setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
-
-      showToast('Failed to refresh models: ' + msg, 'error');
-    } finally {
-      setIsLoadingModels(false);
-    }
-  };
 
   const handleOptimizePrompt = async () => {
     if (!prompt.trim()) return;
@@ -571,18 +488,66 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
   };
 
-  // 解析多行提示词为批量任务
+  /**
+   * 解析多行提示词为批量任务
+   * - 使用 --- 分隔符明确区分多个提示词
+   * - JSON/结构化文本自动识别为单个提示词
+   * - 普通多行文本按行分割
+   */
   const parsePromptsToBatch = (text: string): string[] => {
-    return text
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0);
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+
+    // 1. 优先检测是否使用了分隔符 ---
+    if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
+      return trimmed
+        .split(/\n-{3,}\n?/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
+
+    // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      return [trimmed];
+    }
+
+    // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
+    const lines = trimmed.split('\n');
+    const hasStructuredContent = lines.some(
+      (line) =>
+        line.startsWith('  ') ||
+        line.startsWith('\t') ||
+        /^\s*["'{[]/.test(line)
+    );
+
+    if (hasStructuredContent) {
+      return [trimmed];
+    }
+
+    // 4. 默认按行分割
+    return lines.map((line) => line.trim()).filter((line) => line.length > 0);
   };
 
   // 批量模式下的任务数（用于 UI 显示）
   const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
   const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
-  const batchPromptCount = batchModeEnabled ? Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount) : 0;
+  const batchPromptCount = Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount);
+  const selectedBatchImages = useMemo(() => {
+    if (selectedBatchImageIds.length === 0) return [];
+    const idSet = new Set(selectedBatchImageIds);
+    return batchTasks
+      .flatMap((t) => t.images || [])
+      .filter((img) => idSet.has(img.id));
+  }, [batchTasks, selectedBatchImageIds]);
+
+  useEffect(() => {
+    if (batchTasks.length === 0) {
+      setSelectedBatchImageIds([]);
+      return;
+    }
+    const availableIds = new Set(batchTasks.flatMap((t) => t.images || []).map((img) => img.id));
+    setSelectedBatchImageIds((prev) => prev.filter((id) => availableIds.has(id)));
+  }, [batchTasks]);
 
   const handleBatchGenerate = async () => {
     if (generateLockRef.current) return;
@@ -631,6 +596,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     // 批量模式用 images 渲染，不用 slots
     setGeneratedImages([]);
     setGeneratedSlots([]);
+    setSelectedBatchImageIds([]);
 
     let successCount = 0;
     const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
@@ -818,6 +784,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     setIsBatchMode(false);
     setGeneratedImages([]);
     setGeneratedSlots([]);
+    setSelectedBatchImageIds([]);
   };
 
   const handleBatchDownloadAll = async () => {
@@ -827,6 +794,17 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
 
     try {
       const n = await downloadImagesSequentially(images, { delayMs: 140 });
+      showToast(`已开始下载 ${n} 张`, 'success');
+    } catch (e) {
+      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    }
+  };
+
+  const handleBatchDownloadSelected = async () => {
+    if (isGenerating) return;
+    if (selectedBatchImages.length === 0) return;
+    try {
+      const n = await downloadImagesSequentially(selectedBatchImages, { delayMs: 140 });
       showToast(`已开始下载 ${n} 张`, 'success');
     } catch (e) {
       showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
@@ -933,6 +911,18 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             </div>
           </div>
 
+          {/* 供应商名称编辑 */}
+          <div className="space-y-2">
+            <label className="text-xs text-text-muted">供应商名称</label>
+            <input
+              type="text"
+              value={providerName}
+              onChange={(e) => setProviderName(e.target.value)}
+              placeholder="自定义名称..."
+              className={inputBaseStyles}
+            />
+          </div>
+
           {/* API Key */}
           <form className="space-y-2" onSubmit={(e) => e.preventDefault()} autoComplete="off">
             <label className="text-xs text-text-muted">API Key</label>
@@ -952,28 +942,13 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           {/* Base URL */}
           <div className="space-y-2">
             <label className="text-xs text-text-muted">Base URL</label>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="text"
-                value={settings.baseUrl}
-                onChange={(e) => {
-                  const next = e.target.value;
-                  setSettings((prev) => ({ ...prev, baseUrl: next }));
-                  setAvailableModels([]);
-                  setModelsHint('');
-                }}
-                placeholder="https://api.kie.ai"
-                className={`flex-1 ${inputBaseStyles}`}
-              />
-              <button
-                onClick={() => void handleRefreshModels()}
-                disabled={isLoadingModels || !settings.baseUrl}
-                className="h-9 px-2.5 text-xs rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors"
-                title={modelsHint || '刷新模型列表'}
-              >
-                {isLoadingModels ? '...' : '刷新'}
-              </button>
-            </div>
+            <input
+              type="text"
+              value={settings.baseUrl}
+              onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
+              placeholder="https://api.kie.ai"
+              className={inputBaseStyles}
+            />
             {!settings.baseUrl.trim() && (
               <p className="text-xs text-warning/80">未填写 Base URL，生成/增强将不可用。</p>
             )}
@@ -989,14 +964,16 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             </div>
             <span className="aurora-badge aurora-badge-gold">Kie AI</span>
           </div>
-          <div className="aurora-canvas-body">
+          <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
             {/* 批量模式进度条 */}
             {isBatchMode && batchTasks.length > 0 && (
               <div className="aurora-batch-progress">
                 <div className="flex items-center justify-between mb-2 gap-2">
-                  <span className="text-sm text-text-secondary">
-                    批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
-                  </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm text-text-secondary whitespace-nowrap">
+                      批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
+                    </span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className="flex gap-2 text-xs">
                       <span className="text-success">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
@@ -1015,43 +992,51 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     {!isGenerating &&
                       batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
                       batchTasks.some(t => (t.images?.length || 0) > 0) && (
-                        <button
-                          type="button"
-                          onClick={() => void handleBatchDownloadAll()}
-                          className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
-                        >
-                          下载全部
-                        </button>
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => void handleBatchDownloadAll()}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
+                          >
+                            下载全部
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleBatchDownloadSelected()}
+                            disabled={selectedBatchImages.length === 0}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
+                          >
+                            下载选中
+                          </button>
+                        </>
                       )}
                   </div>
                 </div>
-                <div className="aurora-batch-items">
-                  {batchTasks.map((task, idx) => (
-                    <div
-                      key={task.id}
-                      className={`aurora-batch-item ${
-                        task.status === 'success' ? 'success' :
-                        task.status === 'error' ? 'error' :
-                        task.status === 'running' ? 'running' :
-                        'pending'
-                      }`}
-                      title={task.prompt}
-                    >
-                      {idx + 1}
-                    </div>
-                  ))}
-                </div>
               </div>
             )}
-            <ImageGrid
-              images={generatedImages}
-              slots={isBatchMode ? undefined : generatedSlots}
-              isGenerating={isGenerating}
-              params={params}
-              expectedCount={isBatchMode ? batchPromptCount * safePreviewCountPerPrompt : undefined}
-              onImageClick={onImageClick}
-              onEdit={onEdit}
-            />
+            {isBatchMode ? (
+              <BatchImageGrid
+                tasks={batchTasks}
+                countPerPrompt={safePreviewCountPerPrompt}
+                selectedImageIds={selectedBatchImageIds}
+                onToggleSelect={(id) => {
+                  setSelectedBatchImageIds((prev) =>
+                    prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+                  );
+                }}
+                onImageClick={onImageClick}
+                onEdit={onEdit}
+              />
+            ) : (
+              <ImageGrid
+                images={generatedImages}
+                slots={generatedSlots}
+                isGenerating={isGenerating}
+                params={params}
+                onImageClick={onImageClick}
+                onEdit={onEdit}
+              />
+            )}
           </div>
         </div>
 
@@ -1158,22 +1143,16 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           <div>
             <label className="text-xs text-text-muted mb-1 block">模型</label>
             <div className="relative">
-              <input
-                type="text"
-                list="kie-models-list"
+              <select
                 value={customModel}
                 onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="nano-banana-pro"
-                className={`${inputBaseStyles} pr-8`}
-              />
+                className={selectBaseStyles}
+              >
+                {KIE_PRESET_MODELS.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
+              </select>
               <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
-              {availableModels.length > 0 && (
-                <datalist id="kie-models-list">
-                  {availableModels.map((id) => (
-                    <option key={id} value={id} />
-                  ))}
-                </datalist>
-              )}
             </div>
           </div>
 
@@ -1227,113 +1206,59 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             </div>
           </div>
 
-          {/* 模式切换 (分段控制器) */}
-          <div className="mb-3">
-            <label className="text-xs text-text-muted mb-2 block font-medium">生成模式</label>
-            <div className="bg-slate border border-ash rounded-[var(--radius-md)] p-1 flex relative">
-              <button
-                type="button"
-                onClick={() => setBatchModeEnabled(false)}
-                disabled={isGenerating}
-                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
-                  !batchModeEnabled
-                    ? 'text-obsidian'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                普通生成
-              </button>
-              <button
-                type="button"
-                onClick={() => setBatchModeEnabled(true)}
-                disabled={isGenerating}
-                className={`flex-1 py-2 text-xs font-semibold rounded-[var(--radius-sm)] transition-all duration-200 z-10 ${
-                  batchModeEnabled
-                    ? 'text-obsidian'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
-                } ${isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
-              >
-                批量任务
-              </button>
-              <div
-                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] bg-banana-500 rounded-[var(--radius-sm)] shadow-[var(--shadow-lifted)] transition-all duration-300 ease-spring ${
-                  batchModeEnabled ? 'left-[calc(50%+2px)]' : 'left-1'
-                }`}
-              />
+          {/* 批量任务配置 */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">并发数</label>
+              <div className="relative">
+                <select
+                  value={batchConfig.concurrency}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                    setBatchConfig((prev) => ({ ...prev, concurrency: v }));
+                  }}
+                  className={selectSmallStyles}
+                  disabled={isGenerating}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs text-text-muted mb-1 block">每提示词</label>
+              <div className="relative">
+                <select
+                  value={batchConfig.countPerPrompt}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                    setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
+                  }}
+                  className={selectSmallStyles}
+                  disabled={isGenerating}
+                >
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
+              </div>
             </div>
           </div>
 
-          {/* 模式内容区 */}
-          {batchModeEnabled ? (
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">并发数</label>
-                <div className="relative">
-                  <select
-                    value={batchConfig.concurrency}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
-                      setBatchConfig((prev) => ({ ...prev, concurrency: v }));
-                    }}
-                    className={selectSmallStyles}
-                    disabled={isGenerating}
-                  >
-                    {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="text-xs text-text-muted mb-1 block">每提示词</label>
-                <div className="relative">
-                  <select
-                    value={batchConfig.countPerPrompt}
-                    onChange={(e) => {
-                      const v = Number(e.target.value);
-                      if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
-                      setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
-                    }}
-                    className={selectSmallStyles}
-                    disabled={isGenerating}
-                  >
-                    {[1, 2, 3, 4].map((n) => (
-                      <option key={n} value={n}>{n}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">生成数量</label>
-              <div className="aurora-count-buttons">
-                {[1, 2, 3, 4].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setParams((prev) => ({ ...prev, count: n }))}
-                    className={`aurora-count-btn ${params.count === n ? 'active' : ''}`}
-                  >
-                    {n}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* 生成按钮 */}
           <div className="mt-auto space-y-1">
-            {batchModeEnabled && batchPromptCount > 0 && (
+            {batchPromptCount > 0 && (
               <span className="text-xs text-banana-500 text-center block">
-                批量模式：{batchPromptCount} 个任务
+                提示词:{batchPromptCount}，每提示词:{safePreviewCountPerPrompt} 图片数{batchPromptCount * safePreviewCountPerPrompt}
               </span>
             )}
             <button
-              onClick={isGenerating ? (batchModeEnabled ? handleBatchStop : handleStop) : (batchModeEnabled ? handleBatchGenerate : handleGenerate)}
+              onClick={isGenerating ? handleBatchStop : handleBatchGenerate}
               disabled={!isGenerating && !canGenerate}
               className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
             >
@@ -1342,15 +1267,10 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>停止</span>
                 </>
-              ) : batchModeEnabled ? (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>批量生成</span>
-                </>
               ) : (
                 <>
                   <Sparkles className="w-5 h-5" />
-                  <span>生成 ×{params.count}</span>
+                  <span>生成</span>
                 </>
               )}
             </button>

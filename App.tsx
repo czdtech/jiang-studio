@@ -132,7 +132,8 @@ const App = () => {
         throw new Error('请先在「Kie AI」页配置 Base URL（编辑功能会调用该供应商）。');
       }
 
-      const modelId = String(editingImage?.model || provider.defaultModel || '').trim();
+      // 优先使用传入的 model（来自编辑器的模型选择），否则使用原图模型或默认模型
+      const modelId = String(model || editingImage?.model || provider.defaultModel || '').trim();
       if (!modelId) throw new Error('模型名为空，无法编辑。');
 
       const result = await editKieImage(
@@ -189,8 +190,8 @@ const App = () => {
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
       {/* Main Content - Top margin for header */}
-      <main className="min-h-screen pb-14 md:pb-0 md:pt-12">
-        <div className="h-[calc(100vh-48px)] md:h-[calc(100vh-48px)] max-w-7xl mx-auto">
+      <main className="min-h-screen pb-14 md:pb-0 md:pt-14">
+        <div className="h-[calc(100vh-56px)] md:h-[calc(100vh-56px)] max-w-[1400px] mx-auto">
           {mountedTabs.gemini && (
             <div className={activeTab === 'gemini' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'gemini'}>
               <GeminiPage
