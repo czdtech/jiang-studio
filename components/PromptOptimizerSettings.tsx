@@ -33,8 +33,8 @@ interface PromptOptimizerSettingsProps {
   currentPrompt?: string;
   /** 手动优化触发回调 */
   onOptimize?: () => void;
-  /** 是否正在优化中 */
-  isOptimizing?: boolean;
+  /** 是否为迷你模式（侧边栏嵌入），简化 UI */
+  miniMode?: boolean;
 }
 
 export const PromptOptimizerSettings = ({
@@ -42,6 +42,7 @@ export const PromptOptimizerSettings = ({
   currentPrompt,
   onOptimize,
   isOptimizing = false,
+  miniMode = false,
 }: PromptOptimizerSettingsProps) => {
   const [config, setConfig] = useState<PromptOptimizerConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -88,7 +89,7 @@ export const PromptOptimizerSettings = ({
   const canOptimize = config.enabled && config.mode === 'manual' && currentPrompt?.trim() && !isOptimizing;
 
   return (
-    <div className="mt-3 pt-3 border-t border-dark-border">
+    <div className={miniMode ? "space-y-3" : "mt-3 pt-3 border-t border-dark-border"}>
       {/* 开关按钮 */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-1.5">
@@ -164,7 +165,7 @@ export const PromptOptimizerSettings = ({
             </select>
             {(() => {
               const current = OPTIMIZE_TEMPLATE_GROUPS[0].templates.find(t => t.value === config.templateId);
-              return current ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
+              return (current && !miniMode) ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
             })()}
           </div>
 
@@ -182,7 +183,7 @@ export const PromptOptimizerSettings = ({
             </select>
             {(() => {
               const current = OPTIMIZE_TEMPLATE_GROUPS[1].templates.find(t => t.value === config.templateId);
-              return current ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
+              return (current && !miniMode) ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
             })()}
           </div>
 

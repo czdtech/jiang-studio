@@ -11,9 +11,11 @@ import { OpenAIPage } from './components/OpenAIPage';
 import { GeminiPage } from './components/GeminiPage';
 import { KiePage } from './components/KiePage';
 import { Sidebar } from './components/Sidebar';
+import { SettingsPage } from './components/SettingsPage';
 import { getActiveProviderId, getProviders } from './services/db';
+import { GenerationSettingsProvider } from './contexts/GenerationSettingsContext';
 
-type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio';
+type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio' | 'settings';
 
 const normalizeGeminiModel = (value: unknown): ModelType => {
   if (value === ModelType.NANO_BANANA_PRO) return ModelType.NANO_BANANA_PRO;
@@ -32,6 +34,7 @@ const App = () => {
     antigravity_tools: false,
     kie: false,
     portfolio: false,
+    settings: false,
   }));
 
   useEffect(() => {
@@ -185,7 +188,8 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-dark-bg text-gray-200 font-sans selection:bg-banana-500 selection:text-black">
+    <GenerationSettingsProvider>
+      <div className="min-h-screen bg-dark-bg text-gray-200 font-sans selection:bg-banana-500 selection:text-black">
       {/* Sidebar Navigation */}
       <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
 
@@ -244,7 +248,13 @@ const App = () => {
               />
             </div>
           )}
-        </div>
+            
+            {mountedTabs.settings && (
+              <div className={activeTab === 'settings' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'settings'}>
+                 <SettingsPage />
+              </div>
+            )}
+          </div>
       </main>
 
       <EditorModal
@@ -256,7 +266,8 @@ const App = () => {
       />
 
       <ImagePreviewModal data={previewData} onClose={() => setPreviewData(null)} onEdit={(img) => setEditingImage(img)} />
-    </div>
+      </div>
+    </GenerationSettingsProvider>
   );
 };
 

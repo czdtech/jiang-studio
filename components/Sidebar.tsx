@@ -1,7 +1,7 @@
 import React from 'react';
 import { Sparkles } from 'lucide-react';
 
-type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio';
+type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio' | 'settings';
 
 interface SidebarProps {
   activeTab: PageTab;
@@ -20,6 +20,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'antigravity_tools', label: 'Antigravity', shortLabel: 'AG' },
   { id: 'kie', label: 'Kie AI', shortLabel: 'Kie' },
   { id: 'portfolio', label: '作品集', shortLabel: '作品' },
+  { id: 'settings', label: '设置中心', shortLabel: '设置' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, onTabChange }) => {

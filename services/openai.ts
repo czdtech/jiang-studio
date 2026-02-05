@@ -632,7 +632,7 @@ const requestImageResponse = async (
   const extractPromptText = () => {
     const parts: string[] = [];
     for (const msg of messages) {
-      const content = msg.content;
+      const content = msg.content as any;
       if (typeof content === 'string') {
         if (content.trim()) parts.push(content.trim());
         continue;
@@ -1071,4 +1071,35 @@ export const optimizePrompt = async (
     console.error('Prompt optimization failed:', error);
     throw error;
   }
+};
+
+export const fetchOpenAIModels = async (settings: OpenAISettings): Promise<Array<{ id: string }>> => {
+  const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
+  const url = `${cleanBaseUrl}/v1/models`;
+  
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${settings.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to fetch models: ${response.status} ${text}`);
+  }
+
+  const json = await response.json();
+  // Compatible with standard OpenAI response { data: [{ id: "..." }, ...] }
+  if (Array.isArray(json.data)) {
+    return json.data;
+  }
+  
+  // Some proxies might return array directly
+  if (Array.isArray(json)) {
+    return json;
+  }
+
+  throw new Error('Invalid models response format');
 };
