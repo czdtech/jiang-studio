@@ -8,7 +8,7 @@ import { useToast } from './Toast';
 /** Kie 支持编辑的模型列表 */
 const KIE_EDIT_MODELS = [
   { id: 'google/nano-banana-edit', label: 'Nano Banana Edit（专用编辑模型）' },
-  { id: 'google/nano-banana-pro', label: 'Nano Banana Pro（高质量，支持编辑）' },
+  { id: 'nano-banana-pro', label: 'Nano Banana Pro（高质量，支持编辑）' },
 ];
 
 /** 编辑函数类型 */

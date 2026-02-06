@@ -1,9 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon, Wand2 } from 'lucide-react';
-import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchTask, BatchTaskStatus, BatchConfig } from '../types';
+import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
-import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { BatchImageGrid } from './BatchImageGrid';
@@ -29,6 +28,8 @@ import {
   upsertDraft as upsertDraftInDb,
   upsertProvider as upsertProviderInDb,
 } from '../services/db';
+import { useBatchGenerator } from '../hooks/useBatchGenerator';
+import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
 
 interface KiePageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
@@ -52,9 +53,6 @@ const createDefaultProvider = (): ProviderProfile => {
 };
 
 const MAX_REF_IMAGES = 8;
-const MAX_BATCH_TOTAL = 32;
-const MAX_BATCH_CONCURRENCY = 8;
-const MAX_BATCH_COUNT_PER_PROMPT = 4;
 
 export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const { showToast } = useToast();
@@ -142,20 +140,12 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     // Nano Banana 系列
     { id: 'google/nano-banana', label: 'Nano Banana（Gemini 2.5 Flash 文生图）' },
     { id: 'google/nano-banana-edit', label: 'Nano Banana Edit（图片编辑）' },
-    { id: 'google/nano-banana-pro', label: 'Nano Banana Pro（Gemini 3 Pro 高质量）' },
+    { id: 'nano-banana-pro', label: 'Nano Banana Pro（Gemini 3 Pro 高质量）' },
     // Imagen 4 系列
-    { id: 'google/imagen-4', label: 'Imagen 4（平衡质量与速度）' },
-    { id: 'google/imagen-4-ultra', label: 'Imagen 4 Ultra（超快 2K 高清）' },
-    { id: 'google/imagen-4-fast', label: 'Imagen 4 Fast（快速生成）' },
+    { id: 'google/imagen4', label: 'Imagen 4（平衡质量与速度）' },
+    { id: 'google/imagen4-ultra', label: 'Imagen 4 Ultra（超快 2K 高清）' },
+    { id: 'google/imagen4-fast', label: 'Imagen 4 Fast（快速生成）' },
   ];
-
-  // 批量任务状态
-  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
-  const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
-  const batchAbortRef = useRef(false);
-  const batchAbortControllerRef = useRef<AbortController | null>(null);
-  const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
-  const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
@@ -199,6 +189,36 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   // Results
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
+
+  // Batch Hook
+  const {
+    batchTasks,
+    isBatchMode,
+    batchConfig,
+    selectedBatchImageIds,
+    isGenerating: isBatchGenerating,
+    setBatchConfig,
+    setSelectedBatchImageIds,
+    setIsBatchMode,
+    startBatch,
+    stopBatch,
+    clearBatch,
+    downloadAll,
+    downloadSelected,
+    safePreviewCountPerPrompt
+  } = useBatchGenerator({
+    showToast,
+    saveImage,
+    scope,
+    activeProviderId
+  });
+
+  const batchPromptCount = useMemo(() => {
+      const prompts = parsePromptsToBatch(prompt);
+      const safeCountPerPrompt = Math.max(1, Math.min(4, Math.floor(batchConfig.countPerPrompt || 1)));
+      const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
+      return Math.min(prompts.length, maxBatchPromptCount);
+  }, [prompt, batchConfig.countPerPrompt]);
 
   // 应用当前供应商配置 + 加载草稿（每个供应商一份）
   useEffect(() => {
@@ -362,7 +382,44 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
   };
 
+  const handleBatchGenerate = async () => {
+    const model = customModel.trim();
+    if (!model) {
+      showToast('请先填写模型名', 'error');
+      return;
+    }
+    if (!settings.baseUrl?.trim()) {
+      showToast('请先填写 Base URL', 'error');
+      return;
+    }
+    if (!settings.apiKey?.trim()) {
+      showToast('请先填写 API Key', 'error');
+      return;
+    }
+
+    const baseParams: GenerationParams = {
+        ...params,
+        referenceImages: refImages,
+        model: model as ModelType,
+    };
+
+    await startBatch(
+        prompt,
+        baseParams,
+        (p, signal) => generateImages(p, settings, {
+            signal,
+            // Kie specific logic for ref images handling inside services/kie handles this,
+            // but we pass params which has refImages.
+            // If we wanted to optimize upload, generateImages in kie supports imageInputUrls option.
+            // But useBatchGenerator doesn't support pre-upload optimization across batches generically yet.
+            // That's acceptable for now as Kie service handles it per task.
+        }),
+        optimizerConfig
+    );
+  };
+
   const handleGenerate = async () => {
+    if (isBatchGenerating) return;
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
@@ -378,6 +435,17 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     if (!model) {
       showToast('请先填写模型名', 'error');
       return;
+    }
+
+    // Check if batch
+    const batchPrompts = parsePromptsToBatch(prompt);
+    if (batchPrompts.length > 1) {
+        await handleBatchGenerate();
+        return;
+    }
+
+    if (isBatchMode) {
+        clearBatch();
     }
 
     const controller = new AbortController();
@@ -480,334 +548,15 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   };
 
   const handleStop = () => {
-    if (!isGenerating) return;
-    try {
-      abortControllerRef.current?.abort();
-    } catch {
-      // ignore
-    }
-  };
-
-  /**
-   * 解析多行提示词为批量任务
-   * - 使用 --- 分隔符明确区分多个提示词
-   * - JSON/结构化文本自动识别为单个提示词
-   * - 普通多行文本按行分割
-   */
-  const parsePromptsToBatch = (text: string): string[] => {
-    const trimmed = text.trim();
-    if (!trimmed) return [];
-
-    // 1. 优先检测是否使用了分隔符 ---
-    if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
-      return trimmed
-        .split(/\n-{3,}\n?/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    }
-
-    // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      return [trimmed];
-    }
-
-    // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
-    const lines = trimmed.split('\n');
-    const hasStructuredContent = lines.some(
-      (line) =>
-        line.startsWith('  ') ||
-        line.startsWith('\t') ||
-        /^\s*["'{[]/.test(line)
-    );
-
-    if (hasStructuredContent) {
-      return [trimmed];
-    }
-
-    // 4. 默认按行分割
-    return lines.map((line) => line.trim()).filter((line) => line.length > 0);
-  };
-
-  // 批量模式下的任务数（用于 UI 显示）
-  const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-  const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
-  const batchPromptCount = Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount);
-  const selectedBatchImages = useMemo(() => {
-    if (selectedBatchImageIds.length === 0) return [];
-    const idSet = new Set(selectedBatchImageIds);
-    return batchTasks
-      .flatMap((t) => t.images || [])
-      .filter((img) => idSet.has(img.id));
-  }, [batchTasks, selectedBatchImageIds]);
-
-  useEffect(() => {
-    if (batchTasks.length === 0) {
-      setSelectedBatchImageIds([]);
-      return;
-    }
-    const availableIds = new Set(batchTasks.flatMap((t) => t.images || []).map((img) => img.id));
-    setSelectedBatchImageIds((prev) => prev.filter((id) => availableIds.has(id)));
-  }, [batchTasks]);
-
-  const handleBatchGenerate = async () => {
-    if (generateLockRef.current) return;
-    if (isGenerating) return;
-
-    let prompts = parsePromptsToBatch(prompt);
-    if (prompts.length === 0) return;
-
-    const model = customModel.trim();
-    if (!model) {
-      showToast('请先填写模型名', 'error');
-      return;
-    }
-    if (!settings.baseUrl?.trim()) {
-      showToast('请先填写 Base URL', 'error');
-      return;
-    }
-    if (!settings.apiKey?.trim()) {
-      showToast('请先填写 API Key', 'error');
-      return;
-    }
-
-    const safeCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-    const maxPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
-    if (prompts.length > maxPromptCount) {
-      prompts = prompts.slice(0, maxPromptCount);
-      showToast(`批量模式一次最多生成 ${MAX_BATCH_TOTAL} 张，已截取前 ${maxPromptCount} 条提示词`, 'info');
-    }
-
-    // 初始化批量任务
-    const tasks: BatchTask[] = prompts.map((p) => ({
-      id: crypto.randomUUID(),
-      prompt: p,
-      status: 'pending' as BatchTaskStatus,
-    }));
-
-    const controller = new AbortController();
-    batchAbortControllerRef.current = controller;
-    batchAbortRef.current = false;
-
-    setBatchTasks(tasks);
-    setIsBatchMode(true);
-    generateLockRef.current = true;
-    setIsGenerating(true);
-
-    // 批量模式用 images 渲染，不用 slots
-    setGeneratedImages([]);
-    setGeneratedSlots([]);
-    setSelectedBatchImageIds([]);
-
-    let successCount = 0;
-    const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
-
-    const runTask = async (task: BatchTask) => {
-      if (batchAbortRef.current || controller.signal.aborted) return;
-
-      setBatchTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id ? { ...t, status: 'running' as BatchTaskStatus, startedAt: Date.now() } : t
-        )
-      );
-
-      try {
-        // 自动优化提示词（如果启用）
-        let finalPrompt = task.prompt;
-        if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
-          try {
-            finalPrompt = await optimizeUserPrompt(task.prompt, optimizerConfig.templateId);
-          } catch {
+    if (isGenerating) {
+        try {
+            abortControllerRef.current?.abort();
+        } catch {
             // ignore
-          }
         }
-
-        const currentParams: GenerationParams = {
-          ...params,
-          prompt: finalPrompt,
-          referenceImages: refImages,
-          count: safeCountPerPrompt,
-          model: model as ModelType,
-        };
-
-        const outcomes = await generateImages(currentParams, settings, { signal: controller.signal });
-
-        const successImages = outcomes
-          .filter((o): o is Extract<typeof outcomes[number], { ok: true }> => o.ok === true)
-          .map((o) => ({
-            ...o.image,
-            sourceScope: scope,
-            sourceProviderId: activeProviderId,
-          }));
-
-        const failErrors = outcomes
-          .filter((o): o is Extract<typeof outcomes[number], { ok: false }> => o.ok === false)
-          .map((o) => o.error)
-          .filter((s) => typeof s === 'string' && s.length > 0);
-
-        // 保存图片（成功的那部分）
-        for (const img of successImages) {
-          if (batchAbortRef.current || controller.signal.aborted) break;
-          await saveImage(img);
-        }
-
-        // 更新任务状态
-        if (successImages.length > 0) {
-          setBatchTasks((prev) =>
-            prev.map((t) =>
-              t.id === task.id
-                ? {
-                    ...t,
-                    status: 'success' as BatchTaskStatus,
-                    images: successImages,
-                    error: failErrors.length > 0 ? `部分失败：${failErrors[0]}` : undefined,
-                    completedAt: Date.now(),
-                  }
-                : t
-            )
-          );
-          setGeneratedImages((prev) => [...prev, ...successImages]);
-          successCount++;
-          return;
-        }
-
-        const aborted =
-          controller.signal.aborted ||
-          batchAbortRef.current ||
-          (failErrors.length > 0 && failErrors.every((e) => e === '已停止'));
-
-        setBatchTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id
-              ? {
-                  ...t,
-                  status: 'error' as BatchTaskStatus,
-                  error: aborted ? '已取消' : (failErrors[0] || '生成失败'),
-                  completedAt: Date.now(),
-                }
-              : t
-          )
-        );
-      } catch (e) {
-        const aborted = (e as any)?.name === 'AbortError' || controller.signal.aborted;
-        if (aborted) {
-          setBatchTasks((prev) =>
-            prev.map((t) =>
-              t.id === task.id
-                ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: Date.now() }
-                : t
-            )
-          );
-          return;
-        }
-
-        setBatchTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id
-              ? {
-                  ...t,
-                  status: 'error' as BatchTaskStatus,
-                  error: e instanceof Error ? e.message : '生成失败',
-                  completedAt: Date.now(),
-                }
-              : t
-          )
-        );
-      }
-    };
-
-    const executeWithConcurrency = async () => {
-      const queue = [...tasks];
-      const running = new Set<Promise<void>>();
-
-      while (queue.length > 0 || running.size > 0) {
-        if (batchAbortRef.current || controller.signal.aborted) {
-          await Promise.allSettled(Array.from(running));
-          break;
-        }
-
-        while (running.size < safeConcurrency && queue.length > 0) {
-          const task = queue.shift()!;
-          let p: Promise<void>;
-          p = runTask(task).finally(() => running.delete(p));
-          running.add(p);
-        }
-
-        if (running.size > 0) {
-          await Promise.race(Array.from(running));
-        }
-      }
-    };
-
-    try {
-      await executeWithConcurrency();
-    } finally {
-      generateLockRef.current = false;
-      setIsGenerating(false);
-      batchAbortControllerRef.current = null;
-
-      if (batchAbortRef.current || controller.signal.aborted) {
-        const now = Date.now();
-        setBatchTasks((prev) =>
-          prev.map((t) =>
-            t.status === 'pending'
-              ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
-              : t
-          )
-        );
-        showToast('批量生成已停止', 'info');
-      } else {
-        showToast(`批量完成：${successCount}/${tasks.length} 成功`, successCount === tasks.length ? 'success' : 'info');
-      }
     }
-  };
-
-  const handleBatchStop = () => {
-    if (!isGenerating) return;
-    batchAbortRef.current = true;
-    try {
-      batchAbortControllerRef.current?.abort();
-    } catch {
-      // ignore
-    }
-    const now = Date.now();
-    setBatchTasks((prev) =>
-      prev.map((t) =>
-        t.status === 'pending'
-          ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
-          : t
-      )
-    );
-  };
-
-  const handleClearBatch = () => {
-    setBatchTasks([]);
-    setIsBatchMode(false);
-    setGeneratedImages([]);
-    setGeneratedSlots([]);
-    setSelectedBatchImageIds([]);
-  };
-
-  const handleBatchDownloadAll = async () => {
-    if (isGenerating) return;
-    const images = batchTasks.flatMap((t) => t.images || []);
-    if (images.length === 0) return;
-
-    try {
-      const n = await downloadImagesSequentially(images, { delayMs: 140 });
-      showToast(`已开始下载 ${n} 张`, 'success');
-    } catch (e) {
-      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
-    }
-  };
-
-  const handleBatchDownloadSelected = async () => {
-    if (isGenerating) return;
-    if (selectedBatchImages.length === 0) return;
-    try {
-      const n = await downloadImagesSequentially(selectedBatchImages, { delayMs: 140 });
-      showToast(`已开始下载 ${n} 张`, 'success');
-    } catch (e) {
-      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    if (isBatchGenerating) {
+        stopBatch();
     }
   };
 
@@ -854,6 +603,8 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     { value: '4:3', label: '4:3' },
     { value: '3:4', label: '3:4' },
   ];
+
+  const isBusy = isGenerating || isBatchGenerating;
 
   return (
     <div className="aurora-page">
@@ -980,30 +731,30 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                       <span className="text-error">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
                       <span className="text-text-muted">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
                     </div>
-                    {isGenerating && (
+                    {isBatchGenerating && (
                       <button
                         type="button"
-                        onClick={handleBatchStop}
+                        onClick={stopBatch}
                         className="h-7 px-2 rounded-[var(--radius-md)] border border-error/40 bg-error/10 text-error hover:bg-error/20 transition-colors text-xs"
                       >
                         取消
                       </button>
                     )}
-                    {!isGenerating &&
+                    {!isBatchGenerating &&
                       batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
                       batchTasks.some(t => (t.images?.length || 0) > 0) && (
                         <>
                           <button
                             type="button"
-                            onClick={() => void handleBatchDownloadAll()}
+                            onClick={() => void downloadAll()}
                             className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
                           >
                             下载全部
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleBatchDownloadSelected()}
-                            disabled={selectedBatchImages.length === 0}
+                            onClick={() => void downloadSelected()}
+                            disabled={selectedBatchImageIds.length === 0}
                             className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
                           >
                             下载选中
@@ -1215,11 +966,11 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                   value={batchConfig.concurrency}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                    if (!Number.isFinite(v) || v < 1) return;
                     setBatchConfig((prev) => ({ ...prev, concurrency: v }));
                   }}
                   className={selectSmallStyles}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1235,11 +986,11 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                   value={batchConfig.countPerPrompt}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                    if (!Number.isFinite(v) || v < 1) return;
                     setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
                   }}
                   className={selectSmallStyles}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {[1, 2, 3, 4].map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1258,11 +1009,11 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               </span>
             )}
             <button
-              onClick={isGenerating ? handleBatchStop : handleBatchGenerate}
-              disabled={!isGenerating && !canGenerate}
-              className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
+              onClick={isBusy ? handleStop : handleGenerate}
+              disabled={!isBusy && !canGenerate}
+              className={`aurora-generate-btn ${isBusy ? 'stopping' : ''}`}
             >
-              {isGenerating ? (
+              {isBusy ? (
                 <>
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>停止</span>
@@ -1274,9 +1025,9 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                 </>
               )}
             </button>
-            {isBatchMode && batchTasks.length > 0 && !isGenerating && (
+            {isBatchMode && batchTasks.length > 0 && !isBusy && (
               <button
-                onClick={handleClearBatch}
+                onClick={clearBatch}
                 className="w-full h-6 text-xs text-text-muted hover:text-text-primary transition-colors"
               >
                 清除队列

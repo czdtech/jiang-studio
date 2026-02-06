@@ -178,8 +178,8 @@ export const waitForResultUrls = async (
  * 不同模型的参数格式：
  * - Nano Banana (google/nano-banana): prompt, image_size (比例), output_format
  * - Nano Banana Edit (google/nano-banana-edit): prompt, image_urls (必需), image_size, output_format
- * - Nano Banana Pro (google/nano-banana-pro): prompt, aspect_ratio, resolution, image_input, output_format
- * - Imagen 4 系列: prompt, aspect_ratio, num_images, negative_prompt, seed
+ * - Nano Banana Pro (nano-banana-pro): prompt, aspect_ratio, resolution, image_input, output_format
+ * - Imagen 4 系列 (google/imagen4, google/imagen4-ultra, google/imagen4-fast): prompt, aspect_ratio, num_images, negative_prompt, seed
  */
 const buildKieInput = (
   params: GenerationParams,

@@ -6,17 +6,12 @@ import {
   GenerationParams,
   ModelType,
   MODEL_PRESETS,
-  ProviderDraft,
   ProviderProfile,
   ProviderScope,
   PromptOptimizerConfig,
-  BatchTask,
-  BatchTaskStatus,
-  BatchConfig,
 } from '../types';
 import { generateImages } from '../services/gemini';
 import { optimizeUserPrompt } from '../services/mcp';
-import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid } from './ImageGrid';
 import { BatchImageGrid } from './BatchImageGrid';
@@ -24,26 +19,19 @@ import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { SamplePromptChips } from './SamplePromptChips';
 import {
-  getGenerateButtonStyles,
-  getCountButtonStyles,
   getFavoriteButtonStyles,
   getRefImageButtonStyles,
   inputBaseStyles,
-  textareaBaseStyles,
   selectBaseStyles,
   selectSmallStyles,
 } from './uiStyles';
 import {
-  deleteProvider as deleteProviderFromDb,
-  getActiveProviderId as getActiveProviderIdFromDb,
-  getDraft as getDraftFromDb,
   getPromptOptimizerConfig,
   setPromptOptimizerConfig,
-  getProviders as getProvidersFromDb,
-  setActiveProviderId as setActiveProviderIdInDb,
-  upsertDraft as upsertDraftInDb,
-  upsertProvider as upsertProviderInDb,
 } from '../services/db';
+import { useProviderManagement } from '../hooks/useProviderManagement';
+import { useBatchGenerator } from '../hooks/useBatchGenerator';
+import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
 
 interface GeminiPageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
@@ -52,9 +40,6 @@ interface GeminiPageProps {
 }
 
 const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
-const MAX_BATCH_TOTAL = 32;
-const MAX_BATCH_CONCURRENCY = 8;
-const MAX_BATCH_COUNT_PER_PROMPT = 4;
 
 const normalizeGeminiModel = (value: unknown): ModelType => {
   if (value === ModelType.NANO_BANANA_PRO) return ModelType.NANO_BANANA_PRO;
@@ -62,11 +47,11 @@ const normalizeGeminiModel = (value: unknown): ModelType => {
   return ModelType.NANO_BANANA_PRO;
 };
 
-const createDefaultProvider = (): ProviderProfile => {
+const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
   const now = Date.now();
   return {
     id: crypto.randomUUID(),
-    scope: 'gemini',
+    scope,
     name: 'Gemini 官方',
     apiKey: '',
     baseUrl: DEFAULT_GEMINI_BASE_URL,
@@ -81,21 +66,77 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   const { showToast } = useToast();
   const scope: ProviderScope = 'gemini';
 
-  const [providers, setProviders] = useState<ProviderProfile[]>([]);
-  const [activeProviderId, setActiveProviderIdState] = useState<string>('');
-
-  const activeProvider = useMemo(() => (
-    providers.find((p) => p.id === activeProviderId) || null
-  ), [providers, activeProviderId]);
-
-  const isHydratingRef = useRef(false);
-  const hydratedProviderIdRef = useRef<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  const batchAbortControllerRef = useRef<AbortController | null>(null);
-  const generationRunIdRef = useRef(0);
   const generateLockRef = useRef(false);
   const isMountedRef = useRef(false);
-  const deletingProviderIdRef = useRef<string | null>(null); // 标记正在删除的供应商
+
+  // Generator State
+  const [prompt, setPrompt] = useState('');
+  const [isOptimizing, setIsOptimizing] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [refImages, setRefImages] = useState<string[]>([]);
+
+  // Params
+  const [params, setParams] = useState<GenerationParams>({
+    prompt: '',
+    aspectRatio: '1:1',
+    imageSize: '1K',
+    count: 1,
+    model: ModelType.NANO_BANANA,
+  });
+
+  const {
+    providers,
+    activeProviderId,
+    apiKey: settingsApiKey,
+    setApiKey,
+    baseUrl: settingsBaseUrl,
+    setBaseUrl,
+    providerName,
+    setProviderName,
+    providerFavorite,
+    handleSelectProvider,
+    handleCreateProvider,
+    handleDeleteProvider,
+    toggleFavorite,
+  } = useProviderManagement({
+    scope,
+    createDefaultProvider,
+    onDraftLoaded: useCallback((draft, defaultModel) => {
+      if (draft) {
+        setPrompt(draft.prompt || '');
+        setParams({
+          ...draft.params,
+          model: normalizeGeminiModel(draft.params?.model),
+        });
+        setRefImages(draft.refImages || []);
+      } else {
+        setPrompt('');
+        setRefImages([]);
+
+        const nextModel = normalizeGeminiModel(defaultModel);
+        setParams({
+          prompt: '',
+          aspectRatio: '1:1',
+          imageSize: '1K',
+          count: 1,
+          model: nextModel,
+        });
+      }
+    }, []),
+    draftState: {
+      prompt,
+      params,
+      refImages,
+      model: String(params.model),
+    },
+  });
+
+  // Derived settings object for compatibility
+  const settings: GeminiSettings = useMemo(() => ({
+    apiKey: settingsApiKey,
+    baseUrl: settingsBaseUrl === DEFAULT_GEMINI_BASE_URL ? undefined : settingsBaseUrl,
+  }), [settingsApiKey, settingsBaseUrl]);
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
@@ -135,237 +176,69 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
       isMountedRef.current = false;
       try {
         abortControllerRef.current?.abort();
-        batchAbortControllerRef.current?.abort();
       } catch {
         // ignore
       }
     };
   }, []);
 
-  // 初始化：加载供应商列表与当前选中项
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      const list = await getProvidersFromDb(scope);
-      let nextProviders = list;
-      if (nextProviders.length === 0) {
-        const def = createDefaultProvider();
-        await upsertProviderInDb(def);
-        nextProviders = [def];
-      }
-
-      const savedActiveId = await getActiveProviderIdFromDb(scope);
-      const fallbackId = nextProviders[0]?.id || '';
-      const nextActiveId =
-        savedActiveId && nextProviders.some((p) => p.id === savedActiveId) ? savedActiveId : fallbackId;
-
-      if (!savedActiveId || savedActiveId !== nextActiveId) {
-        if (nextActiveId) await setActiveProviderIdInDb(scope, nextActiveId);
-      }
-
-      if (cancelled) return;
-      setProviders(nextProviders);
-      setActiveProviderIdState(nextActiveId);
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  // Settings (Gemini)
-  const [settings, setSettings] = useState<GeminiSettings>({
-    apiKey: '',
-    baseUrl: undefined,
-  });
-
-  // Generator State
-  const [prompt, setPrompt] = useState('');
-  const [isOptimizing, setIsOptimizing] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [refImages, setRefImages] = useState<string[]>([]);
-
-  const [providerName, setProviderName] = useState<string>('');
-  const [providerFavorite, setProviderFavorite] = useState<boolean>(false);
-
-  // Params
-  const [params, setParams] = useState<GenerationParams>({
-    prompt: '',
-    aspectRatio: '1:1',
-    imageSize: '1K',
-    count: 1,
-    model: ModelType.NANO_BANANA,
-  });
-
   // Results
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
 
-  // 批量任务状态
-  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
-  const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
-  const batchAbortRef = useRef(false);
-  const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
-  const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
+  // Batch Hook
+  const {
+    batchTasks,
+    isBatchMode,
+    batchConfig,
+    selectedBatchImageIds,
+    isGenerating: isBatchGenerating,
+    setBatchConfig,
+    setSelectedBatchImageIds,
+    setIsBatchMode,
+    startBatch,
+    stopBatch,
+    clearBatch,
+    downloadAll,
+    downloadSelected,
+    safePreviewCountPerPrompt
+  } = useBatchGenerator({
+    showToast,
+    saveImage,
+    scope,
+    activeProviderId
+  });
 
-  // 应用当前供应商配置 + 加载草稿
-  useEffect(() => {
-    if (!activeProvider) return;
-    if (hydratedProviderIdRef.current === activeProvider.id) return;
-    hydratedProviderIdRef.current = activeProvider.id;
+  const batchPromptCount = useMemo(() => {
+      const prompts = parsePromptsToBatch(prompt);
+      const safeCountPerPrompt = Math.max(1, Math.min(4, Math.floor(batchConfig.countPerPrompt || 1)));
+      const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
+      return Math.min(prompts.length, maxBatchPromptCount);
+  }, [prompt, batchConfig.countPerPrompt]);
 
-    let cancelled = false;
-    isHydratingRef.current = true;
+  const handleBatchGenerate = async () => {
+    if (generateLockRef.current) return;
 
-    setSettings({
-      apiKey: activeProvider.apiKey,
-      baseUrl: activeProvider.baseUrl === DEFAULT_GEMINI_BASE_URL ? undefined : activeProvider.baseUrl,
-    });
-    setProviderName(activeProvider.name);
-    setProviderFavorite(!!activeProvider.favorite);
-
-    const loadDraft = async () => {
-      const draft = await getDraftFromDb(scope, activeProvider.id);
-      if (cancelled) return;
-
-      if (draft) {
-        setPrompt(draft.prompt || '');
-        setParams({
-          ...draft.params,
-          model: normalizeGeminiModel(draft.params?.model),
-        });
-        setRefImages(draft.refImages || []);
-      } else {
-        setPrompt('');
-        setRefImages([]);
-
-        const nextModel = normalizeGeminiModel(activeProvider.defaultModel);
-        setParams({
-          prompt: '',
-          aspectRatio: '1:1',
-          imageSize: '1K',
-          count: 1,
-          model: nextModel,
-        });
-      }
-
-      isHydratingRef.current = false;
-    };
-
-    void loadDraft().catch((e) => {
-      console.warn('Failed to load draft:', e);
-      isHydratingRef.current = false;
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProvider]);
-
-  // 供应商配置持久化
-  useEffect(() => {
-    if (!activeProvider) return;
-    if (isHydratingRef.current) return;
-
-    const baseUrlToStore = settings.baseUrl || DEFAULT_GEMINI_BASE_URL;
-
-    const next: ProviderProfile = {
-      ...activeProvider,
-      name: providerName || activeProvider.name,
-      favorite: providerFavorite,
-      apiKey: settings.apiKey,
-      baseUrl: baseUrlToStore,
-      defaultModel: String(params.model || activeProvider.defaultModel),
-      updatedAt: Date.now(),
-    };
-
-    const t = window.setTimeout(() => {
-      // 检查供应商是否正在被删除，避免竞态条件导致被删除的供应商被重新插入
-      if (deletingProviderIdRef.current === next.id) return;
-      void upsertProviderInDb(next).catch((e) => console.warn('Failed to save provider:', e));
-      setProviders((prev) => prev.map((p) => (p.id === next.id ? next : p)));
-    }, 300);
-
-    return () => window.clearTimeout(t);
-  }, [
-    activeProvider,
-    providerName,
-    providerFavorite,
-    settings.apiKey,
-    settings.baseUrl,
-    params.model,
-  ]);
-
-  // 草稿持久化
-  useEffect(() => {
-    if (!activeProvider) return;
-    if (isHydratingRef.current) return;
-
-    const draft: ProviderDraft = {
-      scope,
-      providerId: activeProvider.id,
-      prompt,
-      params,
-      refImages,
-      model: String(params.model),
-      updatedAt: Date.now(),
-    };
-
-    const t = window.setTimeout(() => {
-      void upsertDraftInDb(draft).catch((e) => console.warn('Failed to save draft:', e));
-    }, 350);
-
-    return () => window.clearTimeout(t);
-  }, [activeProvider, prompt, params, refImages]);
-
-  const handleSelectProvider = async (nextId: string) => {
-    setActiveProviderIdState(nextId);
-    await setActiveProviderIdInDb(scope, nextId);
-  };
-
-  const handleCreateProvider = async () => {
-    const base = createDefaultProvider();
-    const now = Date.now();
-    const created: ProviderProfile = {
-      ...base,
-      id: crypto.randomUUID(),
-      name: '新供应商',
-      favorite: false,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await upsertProviderInDb(created);
-    const next = await getProvidersFromDb(scope);
-    setProviders(next);
-    await handleSelectProvider(created.id);
-  };
-
-  const handleDeleteProvider = async () => {
-    if (!activeProvider) return;
-    if (providers.length <= 1) {
-      showToast('至少保留一个供应商', 'error');
+    const apiKey = settingsApiKey?.trim();
+    if (!apiKey) {
+      showToast('请先填写 Gemini API Key', 'error');
       return;
     }
-    if (!confirm(`删除供应商「${activeProvider.name}」？`)) return;
 
-    // 标记正在删除，防止配置持久化的定时器重新插入被删除的供应商
-    deletingProviderIdRef.current = activeProvider.id;
-    try {
-      await deleteProviderFromDb(activeProvider.id);
-      const next = await getProvidersFromDb(scope);
-      setProviders(next);
-      const nextActive = next[0]?.id || '';
-      if (nextActive) await handleSelectProvider(nextActive);
-    } finally {
-      deletingProviderIdRef.current = null;
-    }
-  };
+    const baseParams: GenerationParams = {
+        ...params,
+        referenceImages: refImages,
+        model: normalizeGeminiModel(params.model),
+    };
 
-  const handleToggleFavorite = () => {
-    setProviderFavorite((v) => !v);
+    await startBatch(
+        prompt,
+        baseParams,
+        (p, signal) => generateImages(p, {
+            apiKey,
+            baseUrl: settingsBaseUrl || DEFAULT_GEMINI_BASE_URL,
+        }, { signal }),
+        optimizerConfig
+    );
   };
 
   const handleOptimizePrompt = async () => {
@@ -385,23 +258,34 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   };
 
   const handleGenerate = async () => {
+    if (isBatchGenerating) return; // Should not happen due to UI logic but good safety
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
-    const apiKey = settings.apiKey?.trim();
+
+    if (isBatchMode) {
+        clearBatch();
+    }
+
+    const apiKey = settingsApiKey?.trim();
     if (!apiKey) {
       showToast('请先填写 Gemini API Key', 'error');
       return;
     }
 
+    // Check if batch
+    const batchPrompts = parsePromptsToBatch(prompt);
+    if (batchPrompts.length > 1) {
+        await handleBatchGenerate();
+        return;
+    }
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    const runId = ++generationRunIdRef.current;
 
     generateLockRef.current = true;
     setIsGenerating(true);
 
-    // 自动模式：先优化提示词
     let finalPrompt = prompt;
     if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
       try {
@@ -409,7 +293,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         setPrompt(finalPrompt);
         showToast('提示词已自动优化', 'info');
       } catch (err) {
-        // 优化失败，询问是否继续
         const shouldContinue = window.confirm(
           `提示词优化失败：${err instanceof Error ? err.message : '未知错误'}\n\n是否使用原始提示词继续生成？`
         );
@@ -428,347 +311,76 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         referenceImages: refImages,
         model: normalizeGeminiModel(params.model),
       };
-      const results = await generateImages(
+
+      setGeneratedImages([]);
+
+      const outcomes = await generateImages(
         currentParams,
         {
           apiKey,
-          baseUrl: settings.baseUrl || DEFAULT_GEMINI_BASE_URL,
+          baseUrl: settingsBaseUrl || DEFAULT_GEMINI_BASE_URL,
         },
         { signal: controller.signal }
       );
+
       if (!isMountedRef.current) return;
-      if (generationRunIdRef.current !== runId) return;
-      const withSource = results.map((img) => ({
-        ...img,
-        sourceScope: scope,
-        sourceProviderId: activeProviderId,
-      }));
-      setGeneratedImages(withSource);
-      for (const img of withSource) {
+
+      const successImages = outcomes
+          .filter(o => o.ok)
+          .map(o => (o as any).image as GeneratedImage)
+          .map(img => ({
+              ...img,
+              sourceScope: scope,
+              sourceProviderId: activeProviderId,
+          }));
+
+      const failErrors = outcomes
+          .filter(o => !o.ok)
+          .map(o => (o as any).error as string);
+
+      setGeneratedImages(successImages);
+
+      for (const img of successImages) {
         await saveImage(img);
       }
-      showToast(`生成完成：${withSource.length} 张`, 'success');
+
+      const successCount = successImages.length;
+      const failCount = currentParams.count - successCount;
+
+      if (controller.signal.aborted) {
+        showToast(successCount > 0 ? `已停止生成（已生成 ${successCount} 张）` : '已停止生成', 'info');
+      } else if (successCount === 0) {
+        showToast(`生成失败: ${failErrors[0] || '未知错误'}`, 'error');
+      } else if (failCount > 0) {
+        showToast(`生成完成：成功 ${successCount} 张，失败 ${failCount} 张`, 'info');
+      } else {
+        showToast('生成完成', 'success');
+      }
     } catch (error) {
       if (!isMountedRef.current) return;
-      if (generationRunIdRef.current !== runId) return;
-
       const aborted = (error as any)?.name === 'AbortError' || controller.signal.aborted;
       if (aborted) {
         showToast('已停止生成', 'info');
         return;
       }
-
       showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
     } finally {
-      if (generationRunIdRef.current === runId) generateLockRef.current = false;
-      if (!isMountedRef.current) return;
-      if (generationRunIdRef.current !== runId) return;
+      generateLockRef.current = false;
       setIsGenerating(false);
       abortControllerRef.current = null;
     }
   };
 
   const handleStop = () => {
-    if (!isGenerating) return;
-    try {
-      abortControllerRef.current?.abort();
-    } catch {
-      // ignore
-    }
-  };
-
-  // 解析多行提示词为批量任务
-  /**
-   * 解析多行提示词为批量任务
-   * - 使用 --- 分隔符明确区分多个提示词
-   * - JSON/结构化文本自动识别为单个提示词
-   * - 普通多行文本按行分割
-   */
-  const parsePromptsToBatch = (text: string): string[] => {
-    const trimmed = text.trim();
-    if (!trimmed) return [];
-
-    // 1. 优先检测是否使用了分隔符 ---
-    if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
-      return trimmed
-        .split(/\n-{3,}\n?/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    }
-
-    // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      return [trimmed];
-    }
-
-    // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
-    const lines = trimmed.split('\n');
-    const hasStructuredContent = lines.some(
-      (line) =>
-        line.startsWith('  ') ||
-        line.startsWith('\t') ||
-        /^\s*["'{[]/.test(line)
-    );
-
-    if (hasStructuredContent) {
-      return [trimmed];
-    }
-
-    // 4. 默认按行分割
-    return lines.map((line) => line.trim()).filter((line) => line.length > 0);
-  };
-
-  // 批量模式下的任务数（用于 UI 显示）
-  const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-  const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
-  const batchPromptCount = Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount);
-  const selectedBatchImages = useMemo(() => {
-    if (selectedBatchImageIds.length === 0) return [];
-    const idSet = new Set(selectedBatchImageIds);
-    return batchTasks
-      .flatMap((t) => t.images || [])
-      .filter((img) => idSet.has(img.id));
-  }, [batchTasks, selectedBatchImageIds]);
-
-  useEffect(() => {
-    if (batchTasks.length === 0) {
-      setSelectedBatchImageIds([]);
-      return;
-    }
-    const availableIds = new Set(batchTasks.flatMap((t) => t.images || []).map((img) => img.id));
-    setSelectedBatchImageIds((prev) => prev.filter((id) => availableIds.has(id)));
-  }, [batchTasks]);
-
-  // 批量生成处理
-  const handleBatchGenerate = async () => {
-    if (generateLockRef.current) return;
-    if (isGenerating) return;
-
-    let prompts = parsePromptsToBatch(prompt);
-    if (prompts.length === 0) return;
-
-    const apiKey = settings.apiKey?.trim();
-    if (!apiKey) {
-      showToast('请先填写 Gemini API Key', 'error');
-      return;
-    }
-
-    const safeCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-    const maxPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
-    if (prompts.length > maxPromptCount) {
-      prompts = prompts.slice(0, maxPromptCount);
-      showToast(`批量模式一次最多生成 ${MAX_BATCH_TOTAL} 张，已截取前 ${maxPromptCount} 条提示词`, 'info');
-    }
-
-    // 初始化批量任务
-    const tasks: BatchTask[] = prompts.map(p => ({
-      id: crypto.randomUUID(),
-      prompt: p,
-      status: 'pending' as BatchTaskStatus,
-    }));
-
-    // 共享 AbortController：用于中止所有进行中的批量请求
-    const controller = new AbortController();
-    batchAbortControllerRef.current = controller;
-
-    setBatchTasks(tasks);
-    setIsBatchMode(true);
-    batchAbortRef.current = false;
-    generateLockRef.current = true;
-    setIsGenerating(true);
-    setGeneratedImages([]);
-    setSelectedBatchImageIds([]);
-
-    let successCount = 0;
-    const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
-
-    // 并发执行批量任务
-    const runTask = async (task: BatchTask, index: number) => {
-      if (batchAbortRef.current) return;
-      if (controller.signal.aborted) return;
-
-      // 更新状态为运行中
-      setBatchTasks(prev => prev.map(t =>
-        t.id === task.id ? { ...t, status: 'running' as BatchTaskStatus, startedAt: Date.now() } : t
-      ));
-
-      try {
-        // 自动优化提示词（如果启用）
-        let finalPrompt = task.prompt;
-        if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
-          try {
-            finalPrompt = await optimizeUserPrompt(task.prompt, optimizerConfig.templateId);
-          } catch {
-            // 优化失败，使用原始提示词
-          }
+    if (isGenerating) {
+        try {
+            abortControllerRef.current?.abort();
+        } catch {
+            // ignore
         }
-
-        const currentParams: GenerationParams = {
-          ...params,
-          prompt: finalPrompt,
-          referenceImages: refImages,
-          count: safeCountPerPrompt, // 批量模式每个提示词生成多张
-          model: normalizeGeminiModel(params.model),
-        };
-
-        const results = await generateImages(
-          currentParams,
-          {
-            apiKey,
-            baseUrl: settings.baseUrl || DEFAULT_GEMINI_BASE_URL,
-          },
-          { signal: controller.signal }
-        );
-
-        if (batchAbortRef.current || controller.signal.aborted) return;
-
-        const withSource = results.map(img => ({
-          ...img,
-          sourceScope: scope,
-          sourceProviderId: activeProviderId,
-        }));
-
-        // 保存图片
-        for (const img of withSource) {
-          if (batchAbortRef.current || controller.signal.aborted) break;
-          await saveImage(img);
-        }
-
-        // 更新任务状态为成功
-        setBatchTasks(prev => prev.map(t =>
-          t.id === task.id ? {
-            ...t,
-            status: 'success' as BatchTaskStatus,
-            images: withSource,
-            completedAt: Date.now()
-          } : t
-        ));
-
-        // 添加到生成结果
-        setGeneratedImages(prev => [...prev, ...withSource]);
-        successCount++;
-      } catch (error) {
-        const aborted = (error as any)?.name === 'AbortError' || controller.signal.aborted;
-        if (aborted) {
-          setBatchTasks(prev => prev.map(t =>
-            t.id === task.id ? {
-              ...t,
-              status: 'error' as BatchTaskStatus,
-              error: '已取消',
-              completedAt: Date.now()
-            } : t
-          ));
-          return;
-        }
-        if (batchAbortRef.current) return;
-
-        // 更新任务状态为失败
-        setBatchTasks(prev => prev.map(t =>
-          t.id === task.id ? {
-            ...t,
-            status: 'error' as BatchTaskStatus,
-            error: error instanceof Error ? error.message : '生成失败',
-            completedAt: Date.now()
-          } : t
-        ));
-      }
-    };
-
-    // 使用并发控制执行任务
-    const executeWithConcurrency = async () => {
-      const queue = [...tasks];
-      const running = new Set<Promise<void>>();
-
-      while (queue.length > 0 || running.size > 0) {
-        if (batchAbortRef.current || controller.signal.aborted) {
-          // 等待已启动的任务尽快结束（通常会因 abort 而快速落地）
-          await Promise.allSettled(Array.from(running));
-          break;
-        }
-
-        // 填充到并发上限
-        while (running.size < safeConcurrency && queue.length > 0) {
-          const task = queue.shift()!;
-          const index = tasks.findIndex(t => t.id === task.id);
-          let promise: Promise<void>;
-          promise = runTask(task, index).finally(() => {
-            running.delete(promise);
-          });
-          running.add(promise);
-        }
-
-        // 等待任意一个完成
-        if (running.size > 0) {
-          await Promise.race(Array.from(running));
-        }
-      }
-    };
-
-    try {
-      await executeWithConcurrency();
-    } finally {
-      generateLockRef.current = false;
-      setIsGenerating(false);
-      batchAbortControllerRef.current = null;
-
-      if (batchAbortRef.current || controller.signal.aborted) {
-        // 标记未开始的任务为取消
-        const now = Date.now();
-        setBatchTasks(prev => prev.map(t =>
-          t.status === 'pending' ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now } : t
-        ));
-      }
-
-      if (batchAbortRef.current) {
-        showToast('批量生成已停止', 'info');
-      } else {
-        showToast(`批量完成：${successCount}/${tasks.length} 成功`, successCount === tasks.length ? 'success' : 'info');
-      }
     }
-  };
-
-  const handleBatchStop = () => {
-    batchAbortRef.current = true;
-    try {
-      batchAbortControllerRef.current?.abort();
-    } catch {
-      // ignore
-    }
-    const now = Date.now();
-    // 立即标记未开始的任务为取消（运行中的会在请求 abort 后进入 catch）
-    setBatchTasks(prev => prev.map(t =>
-      t.status === 'pending' ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now } : t
-    ));
-  };
-
-  const handleClearBatch = () => {
-    setBatchTasks([]);
-    setIsBatchMode(false);
-    setGeneratedImages([]);
-    setSelectedBatchImageIds([]);
-  };
-
-  const handleBatchDownloadAll = async () => {
-    if (isGenerating) return;
-    const images = batchTasks.flatMap((t) => t.images || []);
-    if (images.length === 0) return;
-
-    try {
-      const n = await downloadImagesSequentially(images, { delayMs: 140 });
-      showToast(`已开始下载 ${n} 张`, 'success');
-    } catch (e) {
-      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
-    }
-  };
-
-  const handleBatchDownloadSelected = async () => {
-    if (isGenerating) return;
-    if (selectedBatchImages.length === 0) return;
-    try {
-      const n = await downloadImagesSequentially(selectedBatchImages, { delayMs: 140 });
-      showToast(`已开始下载 ${n} 张`, 'success');
-    } catch (e) {
-      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    if (isBatchGenerating) {
+        stopBatch();
     }
   };
 
@@ -781,7 +393,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
     try {
       const newImages = await Promise.all(
-        files.map(file => 
+        files.map(file =>
           new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -800,7 +412,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     } catch (err) {
       showToast('图片上传失败', 'error');
     }
-    
+
     // 清空 input value，允许重复上传相同文件
     e.target.value = '';
   };
@@ -820,6 +432,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
   const maxRefImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
   const canGenerate = !!prompt.trim() && !!settings.apiKey.trim();
+  const isBusy = isGenerating || isBatchGenerating;
 
   return (
     <div className="aurora-page">
@@ -858,7 +471,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
               </button>
               <button
                 type="button"
-                onClick={handleToggleFavorite}
+                onClick={toggleFavorite}
                 className={getFavoriteButtonStyles(providerFavorite)}
                 title="收藏"
                 aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
@@ -870,7 +483,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                 onClick={() => void handleDeleteProvider()}
                 className="h-8 w-8 flex items-center justify-center rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-error hover:border-error/50 transition-colors"
                 title="删除供应商"
-                aria-label="删除供应商"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
@@ -894,13 +506,13 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
             <label className="text-xs text-text-muted">API Key</label>
             <input
               type="password"
-              value={settings.apiKey}
-              onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
+              value={settingsApiKey}
+              onChange={(e) => setApiKey(e.target.value)}
               placeholder="AIza..."
               className={inputBaseStyles}
               autoComplete="off"
             />
-            {!settings.apiKey.trim() && (
+            {!settingsApiKey.trim() && (
               <p className="text-xs text-warning/80">
                 未填写 API Key，无法生成。
               </p>
@@ -915,8 +527,8 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
             </label>
             <input
               type="text"
-              value={settings.baseUrl || ''}
-              onChange={(e) => setSettings((s) => ({ ...s, baseUrl: e.target.value || undefined }))}
+              value={settingsBaseUrl || ''}
+              onChange={(e) => setBaseUrl(e.target.value)}
               placeholder="默认官方地址"
               className={inputBaseStyles}
             />
@@ -948,30 +560,30 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                       <span className="text-error">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
                       <span className="text-text-muted">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
                     </div>
-                    {isGenerating && (
+                    {isBatchGenerating && (
                       <button
                         type="button"
-                        onClick={handleBatchStop}
+                        onClick={stopBatch}
                         className="h-7 px-2 rounded-[var(--radius-md)] border border-error/40 bg-error/10 text-error hover:bg-error/20 transition-colors text-xs"
                       >
                         取消
                       </button>
                     )}
-                    {!isGenerating &&
+                    {!isBatchGenerating &&
                       batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
                       batchTasks.some(t => (t.images?.length || 0) > 0) && (
                         <>
                           <button
                             type="button"
-                            onClick={() => void handleBatchDownloadAll()}
+                            onClick={() => void downloadAll()}
                             className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
                           >
                             下载全部
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleBatchDownloadSelected()}
-                            disabled={selectedBatchImages.length === 0}
+                            onClick={() => void downloadSelected()}
+                            disabled={selectedBatchImageIds.length === 0}
                             className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
                           >
                             下载选中
@@ -1187,11 +799,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                   value={batchConfig.concurrency}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                    if (!Number.isFinite(v) || v < 1) return;
                     setBatchConfig((prev) => ({ ...prev, concurrency: v }));
                   }}
                   className={selectSmallStyles}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1207,11 +819,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                   value={batchConfig.countPerPrompt}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                    if (!Number.isFinite(v) || v < 1) return;
                     setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
                   }}
                   className={selectSmallStyles}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {[1, 2, 3, 4].map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1230,11 +842,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
               </span>
             )}
             <button
-              onClick={isGenerating ? handleBatchStop : handleBatchGenerate}
-              disabled={!isGenerating && !canGenerate}
-              className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
+              onClick={isBusy ? handleStop : handleGenerate}
+              disabled={!isBusy && !canGenerate}
+              className={`aurora-generate-btn ${isBusy ? 'stopping' : ''}`}
             >
-              {isGenerating ? (
+              {isBusy ? (
                 <>
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>停止</span>
@@ -1246,9 +858,9 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                 </>
               )}
             </button>
-            {isBatchMode && batchTasks.length > 0 && !isGenerating && (
+            {isBatchMode && batchTasks.length > 0 && !isBusy && (
               <button
-                onClick={handleClearBatch}
+                onClick={clearBatch}
                 className="w-full h-6 text-xs text-text-muted hover:text-text-primary transition-colors"
               >
                 清除队列

@@ -7,15 +7,10 @@ import {
   ModelType,
   ProviderProfile,
   ProviderScope,
-  ProviderDraft,
   PromptOptimizerConfig,
-  BatchTask,
-  BatchTaskStatus,
-  BatchConfig,
 } from '../types';
 import { generateImages } from '../services/openai';
 import { optimizeUserPrompt } from '../services/mcp';
-import { downloadImagesSequentially } from '../services/download';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { BatchImageGrid } from './BatchImageGrid';
@@ -31,16 +26,12 @@ import {
   selectSmallStyles,
 } from './uiStyles';
 import {
-  deleteProvider as deleteProviderFromDb,
-  getActiveProviderId as getActiveProviderIdFromDb,
-  getDraft as getDraftFromDb,
   getPromptOptimizerConfig,
   setPromptOptimizerConfig,
-  getProviders as getProvidersFromDb,
-  setActiveProviderId as setActiveProviderIdInDb,
-  upsertDraft as upsertDraftInDb,
-  upsertProvider as upsertProviderInDb,
 } from '../services/db';
+import { useProviderManagement } from '../hooks/useProviderManagement';
+import { useBatchGenerator } from '../hooks/useBatchGenerator';
+import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
 
 interface OpenAIPageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
@@ -125,7 +116,7 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
     scope,
     name: '默认供应商',
     apiKey: '',
-    baseUrl: '',
+    baseUrl: 'https://api.openai.com',
     defaultModel: 'gemini-3-pro-image',
     favorite: false,
     createdAt: now,
@@ -134,9 +125,6 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
 };
 
 const MAX_REF_IMAGES = 8;
-const MAX_BATCH_TOTAL = 32;
-const MAX_BATCH_CONCURRENCY = 8;
-const MAX_BATCH_COUNT_PER_PROMPT = 4;
 
 export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_party' }: OpenAIPageProps) => {
   const { showToast } = useToast();
@@ -144,115 +132,90 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const isAntigravityTools = variant === 'antigravity_tools';
   const requiresApiKey = !isAntigravityTools;
 
-  const [providers, setProviders] = useState<ProviderProfile[]>([]);
-  const [activeProviderId, setActiveProviderIdState] = useState<string>('');
-
-  const activeProvider = useMemo(() => (
-    providers.find((p) => p.id === activeProviderId) || null
-  ), [providers, activeProviderId]);
-
-  const isHydratingRef = useRef(false);
-  const hydratedProviderIdRef = useRef<string | null>(null);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const batchAbortControllerRef = useRef<AbortController | null>(null);
-  const batchAbortRef = useRef(false);
-  const stopRequestedRef = useRef(false);
-  const generationRunIdRef = useRef(0);
-  const generateLockRef = useRef(false);
-  const isMountedRef = useRef(false);
-  const deletingProviderIdRef = useRef<string | null>(null); // 标记正在删除的供应商
-
-  useEffect(() => {
-    // React StrictMode(dev) 会执行一次“mount->unmount->mount”来检测副作用；这里必须在 effect 中显式置 true。
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      try {
-        abortControllerRef.current?.abort();
-        batchAbortControllerRef.current?.abort();
-      } catch {
-        // ignore
-      }
-    };
-  }, []);
-
-  // 初始化：加载供应商列表与当前选中项
-  useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      const list = await getProvidersFromDb(scope);
-      let nextProviders = list;
-      if (nextProviders.length === 0) {
-        const def = createDefaultProvider(scope);
-        await upsertProviderInDb(def);
-        nextProviders = [def];
-      }
-
-      // 自动修复：Antigravity 供应商的 baseUrl 如果是相对路径，修复为绝对 URL
-      if (scope === 'antigravity_tools') {
-        const needsFix = nextProviders.filter(
-          (p) => p.baseUrl && !p.baseUrl.startsWith('http')
-        );
-        for (const p of needsFix) {
-          console.log('[OpenAIPage] Auto-fixing Antigravity baseUrl:', p.baseUrl, '->', 'http://127.0.0.1:8045');
-          const fixed: ProviderProfile = {
-            ...p,
-            baseUrl: 'http://127.0.0.1:8045',
-            updatedAt: Date.now(),
-          };
-          await upsertProviderInDb(fixed);
-        }
-        if (needsFix.length > 0) {
-          // 重新加载修复后的列表
-          nextProviders = await getProvidersFromDb(scope);
-        }
-      }
-
-      const savedActiveId = await getActiveProviderIdFromDb(scope);
-      const fallbackId = nextProviders[0]?.id || '';
-      const nextActiveId =
-        savedActiveId && nextProviders.some((p) => p.id === savedActiveId) ? savedActiveId : fallbackId;
-
-      if (!savedActiveId || savedActiveId !== nextActiveId) {
-        if (nextActiveId) await setActiveProviderIdInDb(scope, nextActiveId);
-      }
-
-      if (cancelled) return;
-      setProviders(nextProviders);
-      setActiveProviderIdState(nextActiveId);
-    };
-
-    void load();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [scope]);
-
-  // Settings (OpenAI Compatible)
-  const [settings, setSettings] = useState<OpenAISettings>(() => {
-    if (variant === 'antigravity_tools') {
-      return {
-        apiKey: 'sk-antigravity',
-        baseUrl: 'http://127.0.0.1:8045',
-      };
-    }
-    return { apiKey: '', baseUrl: 'https://api.openai.com' };
-  });
-
   // Generator State
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
-
   const [customModel, setCustomModel] = useState(() => (
     variant === 'antigravity_tools' ? 'gemini-3-pro-image' : 'gemini-3-pro-image'
   ));
+  const [params, setParams] = useState<GenerationParams>({
+    prompt: '',
+    aspectRatio: '1:1',
+    imageSize: '1K',
+    count: 1,
+    model: ModelType.CUSTOM, // OpenAI 模式使用自定义模型
+  });
 
-  const [providerName, setProviderName] = useState<string>('');
-  const [providerFavorite, setProviderFavorite] = useState<boolean>(false);
+  const {
+    providers,
+    activeProviderId,
+    activeProvider,
+    apiKey,
+    setApiKey,
+    baseUrl,
+    setBaseUrl,
+    providerName,
+    setProviderName,
+    providerFavorite,
+    handleSelectProvider,
+    handleCreateProvider,
+    handleDeleteProvider,
+    toggleFavorite,
+    updateActiveProvider,
+  } = useProviderManagement({
+    scope,
+    createDefaultProvider,
+    onDraftLoaded: useCallback((draft, defaultModel) => {
+      if (draft) {
+        setPrompt(draft.prompt || '');
+        setParams(draft.params);
+        setRefImages(draft.refImages || []);
+        setCustomModel(draft.model || defaultModel || 'gemini-3-pro-image');
+      } else {
+        setPrompt('');
+        setRefImages([]);
+        setParams({
+          prompt: '',
+          aspectRatio: '1:1',
+          imageSize: '1K',
+          count: 1,
+          model: ModelType.CUSTOM,
+        });
+        setCustomModel(defaultModel || 'gemini-3-pro-image');
+      }
+    }, []),
+    draftState: {
+      prompt,
+      params,
+      refImages,
+      model: customModel,
+    },
+  });
+
+  // Settings object for API calls
+  const settings: OpenAISettings = useMemo(() => ({
+    apiKey,
+    baseUrl,
+  }), [apiKey, baseUrl]);
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const generationRunIdRef = useRef(0);
+  const generateLockRef = useRef(false);
+  const isMountedRef = useRef(false);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      try {
+        abortControllerRef.current?.abort();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
@@ -293,44 +256,48 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsHint, setModelsHint] = useState<string>('');
 
-
-  // Params
-  const [params, setParams] = useState<GenerationParams>({
-    prompt: '',
-    aspectRatio: '1:1',
-    imageSize: '1K',
-    count: 1,
-    model: ModelType.CUSTOM, // OpenAI 模式使用自定义模型
-  });
-
   // Results
   const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
 
-  // 批量任务状态
-  const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
-  const [isBatchMode, setIsBatchMode] = useState(false); // 运行时状态：是否正在执行批量任务
-  const [batchConfig, setBatchConfig] = useState<BatchConfig>(() => ({ concurrency: 2, countPerPrompt: 1 }));
-  const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
+  // Batch Hook
+  const {
+      batchTasks,
+      isBatchMode,
+      batchConfig,
+      selectedBatchImageIds,
+      isGenerating: isBatchGenerating,
+      setBatchConfig,
+      setSelectedBatchImageIds,
+      setIsBatchMode,
+      startBatch,
+      stopBatch,
+      clearBatch,
+      downloadAll,
+      downloadSelected,
+      safePreviewCountPerPrompt
+  } = useBatchGenerator({
+      showToast,
+      saveImage,
+      scope,
+      activeProviderId
+  });
+
+  const batchPromptCount = useMemo(() => {
+      const prompts = parsePromptsToBatch(prompt);
+      const safeCountPerPrompt = Math.max(1, Math.min(4, Math.floor(batchConfig.countPerPrompt || 1)));
+      const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
+      return Math.min(prompts.length, maxBatchPromptCount);
+  }, [prompt, batchConfig.countPerPrompt]);
 
   const inferredAntigravityConfig = useMemo(() => {
     if (!isAntigravityTools) return null;
     return inferAntigravityImageConfigFromModelId(customModel);
   }, [customModel, isAntigravityTools]);
 
-  // 应用当前供应商配置 + 加载草稿（每个供应商一份）
+  // Restore available models from activeProvider cache when it changes
   useEffect(() => {
     if (!activeProvider) return;
-    // 避免 provider 记录被 debounce 保存时触发“二次水合”，导致用户刚选的 model/草稿被旧数据覆盖
-    if (hydratedProviderIdRef.current === activeProvider.id) return;
-    hydratedProviderIdRef.current = activeProvider.id;
-
-    let cancelled = false;
-    isHydratingRef.current = true;
-
-    setSettings({ apiKey: activeProvider.apiKey, baseUrl: activeProvider.baseUrl });
-    setProviderName(activeProvider.name);
-    setProviderFavorite(!!activeProvider.favorite);
 
     const cache = activeProvider.modelsCache;
     if (cache?.all?.length) {
@@ -352,224 +319,60 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       setAvailableTextModels([]);
       setModelsHint('');
     }
-
-    const loadDraft = async () => {
-      const draft = await getDraftFromDb(scope, activeProvider.id);
-      if (cancelled) return;
-
-      if (draft) {
-        setPrompt(draft.prompt || '');
-        setParams(draft.params);
-        setRefImages(draft.refImages || []);
-        setCustomModel(draft.model || activeProvider.defaultModel || 'gemini-3-pro-image');
-      } else {
-        setPrompt('');
-        setRefImages([]);
-        setParams({
-          prompt: '',
-          aspectRatio: '1:1',
-          imageSize: '1K',
-          count: 1,
-          model: ModelType.CUSTOM,
-        });
-        setCustomModel(activeProvider.defaultModel || 'gemini-3-pro-image');
-      }
-
-      isHydratingRef.current = false;
-    };
-
-    void loadDraft().catch((e) => {
-      console.warn('Failed to load draft:', e);
-      isHydratingRef.current = false;
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [activeProvider, scope]);
-
-  // 供应商配置持久化（名称/收藏/baseUrl/apiKey/默认模型）
-  useEffect(() => {
-    if (!activeProvider) return;
-    if (isHydratingRef.current) return;
-
-    const next: ProviderProfile = {
-      ...activeProvider,
-      name: providerName || activeProvider.name,
-      favorite: providerFavorite,
-      apiKey: settings.apiKey,
-      baseUrl: settings.baseUrl,
-      defaultModel: customModel,
-      // 如果 baseUrl 变了，清掉缓存模型，避免误用
-      modelsCache: settings.baseUrl !== activeProvider.baseUrl ? undefined : activeProvider.modelsCache,
-      updatedAt: Date.now(),
-    };
-
-    const t = window.setTimeout(() => {
-      // 检查供应商是否正在被删除，避免竞态条件导致被删除的供应商被重新插入
-      if (deletingProviderIdRef.current === next.id) return;
-      void upsertProviderInDb(next).catch((e) => console.warn('Failed to save provider:', e));
-      setProviders((prev) => prev.map((p) => (p.id === next.id ? next : p)));
-    }, 300);
-
-    return () => window.clearTimeout(t);
-  }, [
-    activeProvider,
-    providerName,
-    providerFavorite,
-    settings.apiKey,
-    settings.baseUrl,
-    customModel,
-  ]);
-
-  // 草稿持久化（每个供应商一份，包含 refImages）
-  useEffect(() => {
-    if (!activeProvider) return;
-    if (isHydratingRef.current) return;
-
-    const draft: ProviderDraft = {
-      scope,
-      providerId: activeProvider.id,
-      prompt,
-      params,
-      refImages,
-      model: customModel,
-      updatedAt: Date.now(),
-    };
-
-    const t = window.setTimeout(() => {
-      void upsertDraftInDb(draft).catch((e) => console.warn('Failed to save draft:', e));
-    }, 350);
-
-    return () => window.clearTimeout(t);
-  }, [activeProvider, scope, prompt, params, refImages, customModel]);
-
-  const handleSelectProvider = async (nextId: string) => {
-    setActiveProviderIdState(nextId);
-    await setActiveProviderIdInDb(scope, nextId);
-  };
-
-  const handleCreateProvider = async () => {
-    const base = createDefaultProvider(scope);
-    const now = Date.now();
-    const created: ProviderProfile = {
-      ...base,
-      id: crypto.randomUUID(),
-      name: '新供应商',
-      favorite: false,
-      createdAt: now,
-      updatedAt: now,
-      modelsCache: undefined,
-    };
-
-    await upsertProviderInDb(created);
-    const next = await getProvidersFromDb(scope);
-    setProviders(next);
-    await handleSelectProvider(created.id);
-  };
-
-  const handleDeleteProvider = async () => {
-    if (!activeProvider) return;
-    if (providers.length <= 1) {
-      showToast('至少保留一个供应商', 'error');
-      return;
-    }
-    if (!confirm(`删除供应商「${activeProvider.name}」？`)) return;
-
-    // 标记正在删除，防止配置持久化的定时器重新插入被删除的供应商
-    deletingProviderIdRef.current = activeProvider.id;
-    try {
-      await deleteProviderFromDb(activeProvider.id);
-      const next = await getProvidersFromDb(scope);
-      setProviders(next);
-      const nextActive = next[0]?.id || '';
-      if (nextActive) await handleSelectProvider(nextActive);
-    } finally {
-      deletingProviderIdRef.current = null;
-    }
-  };
-
-  const handleToggleFavorite = () => {
-    setProviderFavorite((v) => !v);
-  };
+  }, [activeProvider?.id, activeProvider?.modelsCache]);
 
   const handleRefreshModels = async () => {
     if (!activeProvider) {
-      console.log('[handleRefreshModels] No activeProvider, returning');
       return;
     }
-    if (!settings.baseUrl) {
-      console.log('[handleRefreshModels] No baseUrl, showing error');
+    if (!baseUrl) {
       showToast('请先填写 Base URL', 'error');
       return;
     }
 
-    console.log('[handleRefreshModels] Starting refresh', {
-      variant,
-      baseUrl: settings.baseUrl,
-      hasApiKey: !!settings.apiKey,
-      providerId: activeProvider.id,
-    });
-
     setIsLoadingModels(true);
     setModelsHint('');
     try {
-      const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
+      const cleanBaseUrl = baseUrl.replace(/\/$/, '');
       const url = `${cleanBaseUrl}/v1/models`;
-      console.log('[handleRefreshModels] Fetching URL:', url);
 
       const fetchModels = async (withAuth: boolean): Promise<Response> => {
         const headers: Record<string, string> = {};
         if (withAuth) {
-          const key = settings.apiKey || (variant === 'antigravity_tools' ? 'sk-antigravity' : '');
+          const key = apiKey || (variant === 'antigravity_tools' ? 'sk-antigravity' : '');
           if (key) headers.Authorization = `Bearer ${key}`;
         }
         return fetch(url, { method: 'GET', headers });
       };
 
-      // 认证策略：如果配置了 API Key，优先带上 Authorization（某些 API 如 yunwu.ai 不允许匿名访问）
-      // 如果没有配置 API Key，则先不带 Authorization 尝试
-      const hasApiKey = !!settings.apiKey || variant === 'antigravity_tools';
-      console.log('[handleRefreshModels] Sending request with auth:', hasApiKey);
+      // 认证策略
+      const hasApiKey = !!apiKey || variant === 'antigravity_tools';
       let resp = await fetchModels(hasApiKey);
-      console.log('[handleRefreshModels] Response status:', resp.status);
 
-      // 如果首次不带 auth 请求失败（401/403），且有可用的 API Key，则重试
-      if (!hasApiKey && (resp.status === 401 || resp.status === 403) && settings.apiKey) {
-        console.log('[handleRefreshModels] Retrying with auth');
+      if (!hasApiKey && (resp.status === 401 || resp.status === 403) && apiKey) {
         resp = await fetchModels(true);
-        console.log('[handleRefreshModels] Retry response status:', resp.status);
       }
 
       if (!resp.ok) {
         const errText = await resp.text();
-        console.log('[handleRefreshModels] Error response:', errText);
         throw new Error(`API error ${resp.status}: ${errText}`);
       }
 
       const json = (await resp.json()) as { data?: unknown[] };
-      console.log('[handleRefreshModels] Response JSON:', JSON.stringify(json).slice(0, 500));
       const raw = Array.isArray(json.data) ? json.data : [];
-      console.log('[handleRefreshModels] Raw models count:', raw.length);
 
       const ids = raw
         .map((m) => (m && typeof m === 'object' ? (m as { id?: unknown }).id : undefined))
         .filter((id): id is string => typeof id === 'string' && id.trim().length > 0);
 
       const uniqueIds = Array.from(new Set(ids)).sort((a, b) => a.localeCompare(b));
-      console.log('[handleRefreshModels] Unique model IDs:', uniqueIds);
       setAvailableModels(uniqueIds);
 
       const geminiImageIds = uniqueIds.filter(isGeminiImageModelId);
-      console.log('[handleRefreshModels] Gemini image models:', geminiImageIds);
-      
-      // 如果没有筛选到 Gemini 图像模型，则使用所有模型（兼容非 Gemini 的中转服务）
       const effectiveImageModels = geminiImageIds.length > 0 ? geminiImageIds : uniqueIds;
-      console.log('[handleRefreshModels] Effective image models:', effectiveImageModels.length);
       setAvailableImageModels(effectiveImageModels);
 
       const textIds = uniqueIds.filter(isTextModelId);
-      console.log('[handleRefreshModels] Text models:', textIds.length);
       setAvailableTextModels(textIds);
 
       const modelsCache = {
@@ -580,16 +383,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         lastError: undefined,
       };
 
-      const updatedProvider: ProviderProfile = {
-        ...activeProvider,
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
-        modelsCache,
-        updatedAt: Date.now(),
-      };
-
-      await upsertProviderInDb(updatedProvider);
-      setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
+      await updateActiveProvider({ modelsCache });
 
       const hints: string[] = [];
       if (effectiveImageModels.length > 0) {
@@ -604,7 +398,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       } else {
         setModelsHint(`已刷新模型列表（${uniqueIds.length}），但未找到图像/文本模型；请手动输入模型名。`);
       }
-      console.log('[handleRefreshModels] Hint:', hints);
 
       showToast('Models refreshed', 'success');
     } catch (e) {
@@ -612,21 +405,15 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       const hint = `无法从 /v1/models 拉取模型列表（可能是不支持该接口、被 CORS 拦截或需要鉴权）：${msg}`;
       setModelsHint(hint);
 
-      const updatedProvider: ProviderProfile = {
-        ...activeProvider,
-        apiKey: settings.apiKey,
-        baseUrl: settings.baseUrl,
+      await updateActiveProvider({
         modelsCache: {
           all: activeProvider.modelsCache?.all || [],
           image: activeProvider.modelsCache?.image || [],
           text: activeProvider.modelsCache?.text || [],
           fetchedAt: activeProvider.modelsCache?.fetchedAt || Date.now(),
           lastError: hint,
-        },
-        updatedAt: Date.now(),
-      };
-      await upsertProviderInDb(updatedProvider);
-      setProviders((prev) => prev.map((p) => (p.id === updatedProvider.id ? updatedProvider : p)));
+        }
+      });
 
       showToast('Failed to refresh models: ' + msg, 'error');
     } finally {
@@ -650,15 +437,50 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     }
   };
 
+  const handleBatchGenerate = async () => {
+      const model = customModel;
+      if (!model.trim()) {
+        showToast('请先填写模型名', 'error');
+        return;
+      }
+      if (!baseUrl?.trim()) {
+        showToast('请先填写 Base URL', 'error');
+        return;
+      }
+      if (requiresApiKey && !apiKey?.trim()) {
+        showToast('请先填写 API Key', 'error');
+        return;
+      }
+
+      const baseParams: GenerationParams = {
+        ...params,
+        referenceImages: refImages,
+        model: model as ModelType,
+      };
+
+      const antigravityConfig = isAntigravityTools ? inferAntigravityImageConfigFromModelId(model) : null;
+      if (antigravityConfig?.aspectRatio) baseParams.aspectRatio = antigravityConfig.aspectRatio;
+      if (antigravityConfig?.imageSize) baseParams.imageSize = antigravityConfig.imageSize;
+
+      await startBatch(
+          prompt,
+          baseParams,
+          (p, signal) => generateImages(p, settings, {
+              signal,
+              imageConfig: isAntigravityTools ? {} : undefined
+          }),
+          optimizerConfig
+      );
+  };
+
   const handleGenerate = async () => {
+    if (isBatchGenerating) return;
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
 
-    // 切回单条生成时，清理批量状态，避免 UI/slots 冲突
     if (isBatchMode) {
-      setIsBatchMode(false);
-      setBatchTasks([]);
+        clearBatch();
     }
 
     const model = customModel;
@@ -666,24 +488,29 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       showToast('请先填写模型名', 'error');
       return;
     }
-    if (!settings.apiKey) {
+    if (!apiKey && requiresApiKey) {
       showToast('请先填写 API Key', 'error');
       return;
     }
-    if (!settings.baseUrl) {
+    if (!baseUrl) {
       showToast('请先填写 Base URL', 'error');
       return;
     }
 
+    // Check if batch
+    const batchPrompts = parsePromptsToBatch(prompt);
+    if (batchPrompts.length > 1) {
+        await handleBatchGenerate();
+        return;
+    }
+
     const controller = new AbortController();
     abortControllerRef.current = controller;
-    stopRequestedRef.current = false;
     const runId = ++generationRunIdRef.current;
 
     generateLockRef.current = true;
     setIsGenerating(true);
 
-    // 自动模式：先优化提示词
     let finalPrompt = prompt;
     if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
       try {
@@ -691,7 +518,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         setPrompt(finalPrompt);
         showToast('提示词已自动优化', 'info');
       } catch (err) {
-        // 优化失败，询问是否继续
         const shouldContinue = window.confirm(
           `提示词优化失败：${err instanceof Error ? err.message : '未知错误'}\n\n是否使用原始提示词继续生成？`
         );
@@ -721,7 +547,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
       const outcomes = await generateImages(currentParams, settings, {
         signal: controller.signal,
-        // Antigravity Tools 推荐通过“模型后缀 / size 参数”控制比例与分辨率；这里不再额外传 aspect_ratio/size，避免冲突。
         imageConfig: isAntigravityTools ? {} : undefined,
       });
       if (!isMountedRef.current) return;
@@ -745,7 +570,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       setGeneratedSlots(nextSlots);
       setGeneratedImages(successImages);
 
-      // Auto save to portfolio
       for (const img of successImages) {
         await saveImage(img);
       }
@@ -767,7 +591,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
       const aborted = (error as any)?.name === 'AbortError' || controller.signal.aborted;
       if (aborted) {
-        // 将仍处于 pending 的卡片标记为“已停止”
         setGeneratedSlots((prev) =>
           prev.map((s) => (s.status === 'pending' ? { id: s.id, status: 'error', error: '已停止' } : s))
         );
@@ -782,349 +605,19 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       if (generationRunIdRef.current !== runId) return;
       setIsGenerating(false);
       abortControllerRef.current = null;
-      stopRequestedRef.current = false;
     }
   };
 
   const handleStop = () => {
-    if (!isGenerating) return;
-    stopRequestedRef.current = true;
-    try {
-      abortControllerRef.current?.abort();
-    } catch {
-      // ignore
-    }
-  };
-
-  // 解析多行提示词为批量任务
-  /**
-   * 解析多行提示词为批量任务
-   * - 使用 --- 分隔符明确区分多个提示词
-   * - JSON/结构化文本自动识别为单个提示词
-   * - 普通多行文本按行分割
-   */
-  const parsePromptsToBatch = (text: string): string[] => {
-    const trimmed = text.trim();
-    if (!trimmed) return [];
-
-    // 1. 优先检测是否使用了分隔符 ---
-    if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
-      return trimmed
-        .split(/\n-{3,}\n?/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 0);
-    }
-
-    // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-      return [trimmed];
-    }
-
-    // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
-    const lines = trimmed.split('\n');
-    const hasStructuredContent = lines.some(
-      (line) =>
-        line.startsWith('  ') ||
-        line.startsWith('\t') ||
-        /^\s*["'{[]/.test(line)
-    );
-
-    if (hasStructuredContent) {
-      return [trimmed];
-    }
-
-    // 4. 默认按行分割
-    return lines.map((line) => line.trim()).filter((line) => line.length > 0);
-  };
-
-  // 批量模式下的任务数（用于 UI 显示）
-  const safePreviewCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-  const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safePreviewCountPerPrompt));
-  const batchPromptCount = Math.min(parsePromptsToBatch(prompt).length, maxBatchPromptCount);
-  const selectedBatchImages = useMemo(() => {
-    if (selectedBatchImageIds.length === 0) return [];
-    const idSet = new Set(selectedBatchImageIds);
-    return batchTasks
-      .flatMap((t) => t.images || [])
-      .filter((img) => idSet.has(img.id));
-  }, [batchTasks, selectedBatchImageIds]);
-
-  useEffect(() => {
-    if (batchTasks.length === 0) {
-      setSelectedBatchImageIds([]);
-      return;
-    }
-    const availableIds = new Set(batchTasks.flatMap((t) => t.images || []).map((img) => img.id));
-    setSelectedBatchImageIds((prev) => prev.filter((id) => availableIds.has(id)));
-  }, [batchTasks]);
-
-  const handleBatchGenerate = async () => {
-    if (generateLockRef.current) return;
-    if (isGenerating) return;
-
-    let prompts = parsePromptsToBatch(prompt);
-    if (prompts.length === 0) return;
-
-    const model = customModel;
-    if (!model.trim()) {
-      showToast('请先填写模型名', 'error');
-      return;
-    }
-    if (!settings.baseUrl?.trim()) {
-      showToast('请先填写 Base URL', 'error');
-      return;
-    }
-    if (requiresApiKey && !settings.apiKey?.trim()) {
-      showToast('请先填写 API Key', 'error');
-      return;
-    }
-
-    const safeCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-    const maxPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
-    if (prompts.length > maxPromptCount) {
-      prompts = prompts.slice(0, maxPromptCount);
-      showToast(`批量模式一次最多生成 ${MAX_BATCH_TOTAL} 张，已截取前 ${maxPromptCount} 条提示词`, 'info');
-    }
-
-    // 初始化批量任务
-    const tasks: BatchTask[] = prompts.map((p) => ({
-      id: crypto.randomUUID(),
-      prompt: p,
-      status: 'pending' as BatchTaskStatus,
-    }));
-
-    const controller = new AbortController();
-    batchAbortControllerRef.current = controller;
-    batchAbortRef.current = false;
-
-    setBatchTasks(tasks);
-    setIsBatchMode(true);
-    generateLockRef.current = true;
-    setIsGenerating(true);
-
-    // 批量模式用 images 渲染，不用 slots
-    setGeneratedImages([]);
-    setGeneratedSlots([]);
-    setSelectedBatchImageIds([]);
-
-    let successCount = 0;
-    const safeConcurrency = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(batchConfig.concurrency || 1)));
-
-    const runTask = async (task: BatchTask) => {
-      if (batchAbortRef.current || controller.signal.aborted) return;
-
-      setBatchTasks((prev) =>
-        prev.map((t) =>
-          t.id === task.id ? { ...t, status: 'running' as BatchTaskStatus, startedAt: Date.now() } : t
-        )
-      );
-
-      try {
-        // 自动优化提示词（如果启用）
-        let finalPrompt = task.prompt;
-        if (optimizerConfig?.enabled && optimizerConfig.mode === 'auto') {
-          try {
-            finalPrompt = await optimizeUserPrompt(task.prompt, optimizerConfig.templateId);
-          } catch {
+    if (isGenerating) {
+        try {
+            abortControllerRef.current?.abort();
+        } catch {
             // ignore
-          }
         }
-
-        const currentParams: GenerationParams = {
-          ...params,
-          prompt: finalPrompt,
-          referenceImages: refImages,
-          count: safeCountPerPrompt,
-          model: model as ModelType,
-        };
-
-        const antigravityConfig = isAntigravityTools ? inferAntigravityImageConfigFromModelId(model) : null;
-        if (antigravityConfig?.aspectRatio) currentParams.aspectRatio = antigravityConfig.aspectRatio;
-        if (antigravityConfig?.imageSize) currentParams.imageSize = antigravityConfig.imageSize;
-
-        const outcomes = await generateImages(currentParams, settings, {
-          signal: controller.signal,
-          // Antigravity Tools 推荐通过“模型后缀 / size 参数”控制比例与分辨率；这里不再额外传 aspect_ratio/size，避免冲突。
-          imageConfig: isAntigravityTools ? {} : undefined,
-        });
-
-        const successImages = outcomes
-          .filter((o): o is Extract<typeof outcomes[number], { ok: true }> => o.ok === true)
-          .map((o) => ({
-            ...o.image,
-            sourceScope: scope,
-            sourceProviderId: activeProviderId,
-          }));
-
-        const failErrors = outcomes
-          .filter((o): o is Extract<typeof outcomes[number], { ok: false }> => o.ok === false)
-          .map((o) => o.error)
-          .filter((s) => typeof s === 'string' && s.length > 0);
-
-        // 保存图片（成功的那部分）
-        for (const img of successImages) {
-          if (batchAbortRef.current || controller.signal.aborted) break;
-          await saveImage(img);
-        }
-
-        // 更新任务状态
-        if (successImages.length > 0) {
-          setBatchTasks((prev) =>
-            prev.map((t) =>
-              t.id === task.id
-                ? {
-                    ...t,
-                    status: 'success' as BatchTaskStatus,
-                    images: successImages,
-                    error: failErrors.length > 0 ? `部分失败：${failErrors[0]}` : undefined,
-                    completedAt: Date.now(),
-                  }
-                : t
-            )
-          );
-          setGeneratedImages((prev) => [...prev, ...successImages]);
-          successCount++;
-          return;
-        }
-
-        const aborted =
-          controller.signal.aborted ||
-          batchAbortRef.current ||
-          (failErrors.length > 0 && failErrors.every((e) => e === '已停止'));
-
-        setBatchTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id
-              ? {
-                  ...t,
-                  status: 'error' as BatchTaskStatus,
-                  error: aborted ? '已取消' : (failErrors[0] || '生成失败'),
-                  completedAt: Date.now(),
-                }
-              : t
-          )
-        );
-      } catch (e) {
-        const aborted = (e as any)?.name === 'AbortError' || controller.signal.aborted;
-        if (aborted) {
-          setBatchTasks((prev) =>
-            prev.map((t) =>
-              t.id === task.id
-                ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: Date.now() }
-                : t
-            )
-          );
-          return;
-        }
-
-        setBatchTasks((prev) =>
-          prev.map((t) =>
-            t.id === task.id
-              ? {
-                  ...t,
-                  status: 'error' as BatchTaskStatus,
-                  error: e instanceof Error ? e.message : '生成失败',
-                  completedAt: Date.now(),
-                }
-              : t
-          )
-        );
-      }
-    };
-
-    const executeWithConcurrency = async () => {
-      const queue = [...tasks];
-      const running = new Set<Promise<void>>();
-
-      while (queue.length > 0 || running.size > 0) {
-        if (batchAbortRef.current || controller.signal.aborted) {
-          await Promise.allSettled(Array.from(running));
-          break;
-        }
-
-        while (running.size < safeConcurrency && queue.length > 0) {
-          const task = queue.shift()!;
-          let p: Promise<void>;
-          p = runTask(task).finally(() => running.delete(p));
-          running.add(p);
-        }
-
-        if (running.size > 0) {
-          await Promise.race(Array.from(running));
-        }
-      }
-    };
-
-    try {
-      await executeWithConcurrency();
-    } finally {
-      generateLockRef.current = false;
-      setIsGenerating(false);
-      batchAbortControllerRef.current = null;
-
-      if (batchAbortRef.current || controller.signal.aborted) {
-        const now = Date.now();
-        setBatchTasks((prev) =>
-          prev.map((t) =>
-            t.status === 'pending'
-              ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
-              : t
-          )
-        );
-        showToast('批量生成已停止', 'info');
-      } else {
-        showToast(`批量完成：${successCount}/${tasks.length} 成功`, successCount === tasks.length ? 'success' : 'info');
-      }
     }
-  };
-
-  const handleBatchStop = () => {
-    if (!isGenerating) return;
-    batchAbortRef.current = true;
-    try {
-      batchAbortControllerRef.current?.abort();
-    } catch {
-      // ignore
-    }
-    const now = Date.now();
-    setBatchTasks((prev) =>
-      prev.map((t) =>
-        t.status === 'pending'
-          ? { ...t, status: 'error' as BatchTaskStatus, error: '已取消', completedAt: now }
-          : t
-      )
-    );
-  };
-
-  const handleClearBatch = () => {
-    setBatchTasks([]);
-    setIsBatchMode(false);
-    setGeneratedImages([]);
-    setGeneratedSlots([]);
-    setSelectedBatchImageIds([]);
-  };
-
-  const handleBatchDownloadAll = async () => {
-    if (isGenerating) return;
-    const images = batchTasks.flatMap((t) => t.images || []);
-    if (images.length === 0) return;
-
-    try {
-      const n = await downloadImagesSequentially(images, { delayMs: 140 });
-      showToast(`已开始下载 ${n} 张`, 'success');
-    } catch (e) {
-      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
-    }
-  };
-
-  const handleBatchDownloadSelected = async () => {
-    if (isGenerating) return;
-    if (selectedBatchImages.length === 0) return;
-    try {
-      const n = await downloadImagesSequentially(selectedBatchImages, { delayMs: 140 });
-      showToast(`已开始下载 ${n} 张`, 'success');
-    } catch (e) {
-      showToast('批量下载失败：' + (e instanceof Error ? e.message : '未知错误'), 'error');
+    if (isBatchGenerating) {
+        stopBatch();
     }
   };
 
@@ -1162,8 +655,10 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const canGenerate =
     !!prompt.trim() &&
     !!customModel.trim() &&
-    !!settings.baseUrl.trim() &&
-    (!requiresApiKey || !!settings.apiKey.trim());
+    !!baseUrl?.trim() &&
+    (!requiresApiKey || !!apiKey?.trim());
+
+  const isBusy = isGenerating || isBatchGenerating;
 
   return (
     <div className="aurora-page">
@@ -1204,7 +699,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               </button>
               <button
                 type="button"
-                onClick={handleToggleFavorite}
+                onClick={toggleFavorite}
                 className={getFavoriteButtonStyles(providerFavorite)}
                 title="收藏"
                 aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
@@ -1240,13 +735,13 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             <label className="text-xs text-text-muted">API Key</label>
             <input
               type="password"
-              value={settings.apiKey}
-              onChange={(e) => setSettings((s) => ({ ...s, apiKey: e.target.value }))}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
               placeholder="sk-..."
               className={inputBaseStyles}
               autoComplete="off"
             />
-            {requiresApiKey && !settings.apiKey.trim() && (
+            {requiresApiKey && !apiKey?.trim() && (
               <p className="text-xs text-warning/80">未填写 API Key，生成/增强将不可用。</p>
             )}
           </form>
@@ -1257,10 +752,10 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             <div className="flex items-center gap-1.5">
               <input
                 type="text"
-                value={settings.baseUrl}
+                value={baseUrl}
                 onChange={(e) => {
                   const next = e.target.value;
-                  setSettings((s) => ({ ...s, baseUrl: next }));
+                  setBaseUrl(next);
                   setAvailableModels([]);
                   setAvailableImageModels([]);
                   setModelsHint('');
@@ -1270,14 +765,14 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               />
               <button
                 onClick={() => void handleRefreshModels()}
-                disabled={isLoadingModels || !settings.baseUrl}
+                disabled={isLoadingModels || !baseUrl}
                 className="h-9 px-2.5 text-xs rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors"
                 title={modelsHint || '刷新模型列表'}
               >
                 {isLoadingModels ? '...' : '刷新'}
               </button>
             </div>
-            {!settings.baseUrl.trim() && (
+            {!baseUrl?.trim() && (
               <p className="text-xs text-warning/80">未填写 Base URL，无法请求模型列表与生成。</p>
             )}
           </div>
@@ -1308,30 +803,30 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                       <span className="text-error">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
                       <span className="text-text-muted">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
                     </div>
-                    {isGenerating && (
+                    {isBatchGenerating && (
                       <button
                         type="button"
-                        onClick={handleBatchStop}
+                        onClick={stopBatch}
                         className="h-7 px-2 rounded-[var(--radius-md)] border border-error/40 bg-error/10 text-error hover:bg-error/20 transition-colors text-xs"
                       >
                         取消
                       </button>
                     )}
-                    {!isGenerating &&
+                    {!isBatchGenerating &&
                       batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
                       batchTasks.some(t => (t.images?.length || 0) > 0) && (
                         <>
                           <button
                             type="button"
-                            onClick={() => void handleBatchDownloadAll()}
+                            onClick={() => void downloadAll()}
                             className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
                           >
                             下载全部
                           </button>
                           <button
                             type="button"
-                            onClick={() => void handleBatchDownloadSelected()}
-                            disabled={selectedBatchImages.length === 0}
+                            onClick={() => void downloadSelected()}
+                            disabled={selectedBatchImageIds.length === 0}
                             className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
                           >
                             下载选中
@@ -1558,11 +1053,11 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   value={batchConfig.concurrency}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_CONCURRENCY) return;
+                    if (!Number.isFinite(v) || v < 1) return;
                     setBatchConfig((prev) => ({ ...prev, concurrency: v }));
                   }}
                   className={selectSmallStyles}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1578,11 +1073,11 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   value={batchConfig.countPerPrompt}
                   onChange={(e) => {
                     const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1 || v > MAX_BATCH_COUNT_PER_PROMPT) return;
+                    if (!Number.isFinite(v) || v < 1) return;
                     setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
                   }}
                   className={selectSmallStyles}
-                  disabled={isGenerating}
+                  disabled={isBusy}
                 >
                   {[1, 2, 3, 4].map((n) => (
                     <option key={n} value={n}>{n}</option>
@@ -1601,11 +1096,11 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               </span>
             )}
             <button
-              onClick={isGenerating ? handleBatchStop : handleBatchGenerate}
-              disabled={!isGenerating && !canGenerate}
-              className={`aurora-generate-btn ${isGenerating ? 'stopping' : ''}`}
+              onClick={isBusy ? handleStop : handleGenerate}
+              disabled={!isBusy && !canGenerate}
+              className={`aurora-generate-btn ${isBusy ? 'stopping' : ''}`}
             >
-              {isGenerating ? (
+              {isBusy ? (
                 <>
                   <RefreshCw className="w-5 h-5 animate-spin" />
                   <span>停止</span>
@@ -1617,9 +1112,9 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                 </>
               )}
             </button>
-            {isBatchMode && batchTasks.length > 0 && !isGenerating && (
+            {isBatchMode && batchTasks.length > 0 && !isBusy && (
               <button
-                onClick={handleClearBatch}
+                onClick={clearBatch}
                 className="w-full h-6 text-xs text-text-muted hover:text-text-primary transition-colors"
               >
                 清除队列

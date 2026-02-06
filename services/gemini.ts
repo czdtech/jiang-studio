@@ -2,7 +2,7 @@
  * Gemini 官方 SDK 实现
  */
 import { GoogleGenAI, setDefaultBaseUrls } from '@google/genai';
-import { GenerationParams, GeneratedImage, ModelType } from '../types';
+import { GenerationParams, GeneratedImage, ModelType, ImageGenerationOutcome } from '../types';
 import {
   cleanBase64,
   createGeneratedImage,
@@ -129,38 +129,58 @@ export const generateImages = async (
   params: GenerationParams,
   settings: GeminiSettings,
   options?: { signal?: AbortSignal }
-): Promise<GeneratedImage[]> => {
+): Promise<ImageGenerationOutcome[]> => {
   const signal = options?.signal;
   const errors: Error[] = [];
 
-  const createTask = () => async (): Promise<GeneratedImage | null> => {
+  const createTask = (index: number) => async (): Promise<{ index: number; outcome: ImageGenerationOutcome }> => {
     try {
-      return await generateSingle(params, settings, signal);
+      if (signal?.aborted) throw createAbortError();
+      const image = await generateSingle(params, settings, signal);
+      return { index, outcome: { ok: true, image } };
     } catch (e) {
-      if ((e as any)?.name === 'AbortError' || signal?.aborted) throw e;
-      errors.push(e instanceof Error ? e : new Error(String(e)));
-      return null;
+      if ((e as any)?.name === 'AbortError' || signal?.aborted) {
+         return { index, outcome: { ok: false, error: '已停止' } };
+      }
+      return { index, outcome: { ok: false, error: e instanceof Error ? e.message : String(e) } };
     }
   };
 
-  const tasks = Array.from({ length: params.count }, createTask);
-  let results: Array<GeneratedImage | null> = [];
+  const tasks = Array.from({ length: params.count }, (_, i) => createTask(i));
+  let results: Array<{ index: number; outcome: ImageGenerationOutcome }> = [];
+
   if (signal) {
-    const abortPromise: Promise<never> = new Promise((_, reject) => {
-      if (signal.aborted) return reject(createAbortError());
-      signal.addEventListener('abort', () => reject(createAbortError()), { once: true });
-    });
-    results = await Promise.race([runWithConcurrency(tasks, MAX_CONCURRENCY, signal), abortPromise]);
+     // If using concurrency helper, it might throw if signal aborts.
+     // We need to catch that.
+     try {
+       results = await runWithConcurrency(tasks, MAX_CONCURRENCY, signal);
+     } catch (e) {
+       if ((e as any)?.name === 'AbortError' || signal.aborted) {
+          // If aborted, we might have some results or none.
+          // But usually we just return 'Aborted' status for missing ones if we were to construct a full list.
+          // For now, let's just return what we have or fill with aborted.
+       }
+     }
   } else {
     results = await runWithConcurrency(tasks, MAX_CONCURRENCY, signal);
   }
-  const images = results.filter((r): r is GeneratedImage => r !== null);
 
-  if (images.length === 0 && params.count > 0) {
-    throw new Error(aggregateErrors(errors));
+  // Fill in any missing results (e.g. if aborted early)
+  const outcomes: ImageGenerationOutcome[] = Array.from({ length: params.count });
+
+  // Populate known results
+  results.forEach(r => {
+      outcomes[r.index] = r.outcome;
+  });
+
+  // Fill gaps
+  for(let i=0; i<params.count; i++) {
+      if (!outcomes[i]) {
+          outcomes[i] = { ok: false, error: signal?.aborted ? '已停止' : 'Unknown error' };
+      }
   }
 
-  return images;
+  return outcomes;
 };
 
 /** 上传图像到 File API 并返回 URI（用于多次编辑优化） */

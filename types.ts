@@ -128,3 +128,7 @@ export interface BatchConfig {
   concurrency: number; // 并发数，默认 2
   countPerPrompt: number; // 每个提示词生成几张，默认 1
 }
+
+export type ImageGenerationOutcome =
+  | { ok: true; image: GeneratedImage }
+  | { ok: false; error: string };

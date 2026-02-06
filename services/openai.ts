@@ -633,10 +633,6 @@ const requestImageResponse = async (
     const parts: string[] = [];
     for (const msg of messages) {
       const content = msg.content;
-      if (typeof content === 'string') {
-        if (content.trim()) parts.push(content.trim());
-        continue;
-      }
       for (const part of content) {
         if (part.type === 'text' && part.text?.trim()) parts.push(part.text.trim());
       }
@@ -916,7 +912,8 @@ export const generateImages = async (
           return { index, outcome: { ok: false, error: '已停止' } as const };
         }
         if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr)) {
-          await new Promise((r) => setTimeout(r, 300));
+          const is429 = /API error 429/.test(lastErr);
+          await new Promise((r) => setTimeout(r, is429 ? 3000 : 300));
         } else {
           break;
         }
