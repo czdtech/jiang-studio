@@ -12,9 +12,11 @@ const mcpTarget = process.env.PROMPT_OPTIMIZER_TARGET
   || 'http://prompt-optimizer.railway.internal:80';
 
 // 代理 /mcp 到 prompt-optimizer 内网服务
-app.use('/mcp', createProxyMiddleware({
+// 使用 pathFilter 而非 Express 路径挂载，避免 Express 剥离 /mcp 前缀
+app.use(createProxyMiddleware({
   target: mcpTarget,
   changeOrigin: true,
+  pathFilter: '/mcp',
 }));
 
 // 托管 dist/ 静态文件
