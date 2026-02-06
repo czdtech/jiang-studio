@@ -4,27 +4,34 @@ import { PromptOptimizerConfig } from '../types';
 import { getPromptOptimizerConfig, setPromptOptimizerConfig, createDefaultPromptOptimizerConfig } from '../services/db';
 import { Tooltip } from './Tooltip';
 
+/** 模板分类 */
+type TemplateCategory = 'text2image' | 'image2image';
+
 /** 优化模板选项（按分类） */
-const OPTIMIZE_TEMPLATE_GROUPS = [
-  {
-    label: '文生图',
-    templates: [
-      { value: 'image-general-optimize', label: '通用自然语言', desc: '围绕主体/动作/环境/光线/配色/材质/氛围进行层次化叙述' },
-      { value: 'image-chinese-optimize', label: '中文美学', desc: '中文语境与传统美学，融入意境、留白、水墨工笔等风格' },
-      { value: 'image-creative-text2image', label: '创意解构', desc: '深度解构原始文本，创造前所未见的奇幻视觉叙事' },
-      { value: 'image-photography-optimize', label: '摄影向', desc: '强调主体、构图、光线与氛围，适合摄影风格生成' },
-      { value: 'image-json-structured-optimize', label: 'JSON 结构化', desc: '输出严格 JSON 格式，结构通用可自由扩展' },
-    ],
-  },
-  {
-    label: '图生图',
-    templates: [
-      { value: 'image2image-general-optimize', label: '通用编辑', desc: '识别添加/删除/替换/增强意图，克制而自然的编辑指导' },
-      { value: 'image2image-design-text-edit-optimize', label: '设计文案替换', desc: '保持配色、字体、版式不变，仅替换文案内容' },
-      { value: 'image2image-json-structured-optimize', label: 'JSON 结构化', desc: '输出严格 JSON 格式，附带"保留/改变"指导' },
-    ],
-  },
+const TEXT2IMAGE_TEMPLATES = [
+  { value: 'image-general-optimize', label: '通用自然语言', desc: '围绕主体/动作/环境/光线/配色/材质/氛围进行层次化叙述' },
+  { value: 'image-chinese-optimize', label: '中文美学', desc: '中文语境与传统美学，融入意境、留白、水墨工笔等风格' },
+  { value: 'image-creative-text2image', label: '创意解构', desc: '深度解构原始文本，创造前所未见的奇幻视觉叙事' },
+  { value: 'image-photography-optimize', label: '摄影向', desc: '强调主体、构图、光线与氛围，适合摄影风格生成' },
+  { value: 'image-json-structured-optimize', label: 'JSON 结构化', desc: '输出严格 JSON 格式，结构通用可自由扩展' },
 ];
+
+const IMAGE2IMAGE_TEMPLATES = [
+  { value: 'image2image-general-optimize', label: '通用编辑', desc: '识别添加/删除/替换/增强意图，克制而自然的编辑指导' },
+  { value: 'image2image-design-text-edit-optimize', label: '设计文案替换', desc: '保持配色、字体、版式不变，仅替换文案内容' },
+  { value: 'image2image-json-structured-optimize', label: 'JSON 结构化', desc: '输出严格 JSON 格式，附带"保留/改变"指导' },
+];
+
+const ALL_TEMPLATE_VALUES = new Set([
+  ...TEXT2IMAGE_TEMPLATES.map(t => t.value),
+  ...IMAGE2IMAGE_TEMPLATES.map(t => t.value),
+]);
+
+/** 根据 templateId 推断所属分类 */
+const inferCategory = (templateId: string): TemplateCategory => {
+  if (IMAGE2IMAGE_TEMPLATES.some(t => t.value === templateId)) return 'image2image';
+  return 'text2image';
+};
 
 interface PromptOptimizerSettingsProps {
   /** 配置变化时通知父组件 */
@@ -45,6 +52,7 @@ export const PromptOptimizerSettings = ({
 }: PromptOptimizerSettingsProps) => {
   const [config, setConfig] = useState<PromptOptimizerConfig | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [templateCategory, setTemplateCategory] = useState<TemplateCategory>('text2image');
 
   // 加载配置
   useEffect(() => {
@@ -61,6 +69,8 @@ export const PromptOptimizerSettings = ({
           iterateTemplateId: saved.iterateTemplateId || 'image-iterate-general',
         } as PromptOptimizerConfig;
         setConfig(normalized);
+        // 根据已保存的模板推断分类
+        setTemplateCategory(inferCategory(normalized.templateId));
       } else {
         const def = createDefaultPromptOptimizerConfig();
         setConfig(def);
@@ -150,39 +160,60 @@ export const PromptOptimizerSettings = ({
             </p>
           </div>
 
-          {/* 文生图模板 */}
+          {/* 模板分类切换 */}
           <div>
-            <label className="block text-xs text-gray-500 mb-1.5">文生图模板</label>
-            <select
-              value={config.templateId}
-              onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
-              className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
-            >
-              {OPTIMIZE_TEMPLATE_GROUPS[0].templates.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
+            <label className="block text-xs text-gray-500 mb-1.5">优化模板</label>
+            <div className="flex gap-2 mb-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTemplateCategory('text2image');
+                  // 切换分类时，自动选中该分类的第一个模板
+                  const firstTemplate = TEXT2IMAGE_TEMPLATES[0].value;
+                  setConfig({ ...config, templateId: firstTemplate, updatedAt: Date.now() });
+                }}
+                className={`flex-1 text-xs py-1.5 px-2 rounded border transition-colors ${
+                  templateCategory === 'text2image'
+                    ? 'bg-banana-500/20 border-banana-500 text-banana-400'
+                    : 'bg-dark-bg border-dark-border text-gray-400 hover:border-gray-500'
+                }`}
+              >
+                文生图
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTemplateCategory('image2image');
+                  const firstTemplate = IMAGE2IMAGE_TEMPLATES[0].value;
+                  setConfig({ ...config, templateId: firstTemplate, updatedAt: Date.now() });
+                }}
+                className={`flex-1 text-xs py-1.5 px-2 rounded border transition-colors ${
+                  templateCategory === 'image2image'
+                    ? 'bg-banana-500/20 border-banana-500 text-banana-400'
+                    : 'bg-dark-bg border-dark-border text-gray-400 hover:border-gray-500'
+                }`}
+              >
+                图生图
+              </button>
+            </div>
+            {/* 当前分类的模板列表 */}
             {(() => {
-              const current = OPTIMIZE_TEMPLATE_GROUPS[0].templates.find(t => t.value === config.templateId);
-              return current ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
-            })()}
-          </div>
-
-          {/* 图生图模板 */}
-          <div>
-            <label className="block text-xs text-gray-500 mb-1.5">图生图模板</label>
-            <select
-              value={config.templateId}
-              onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
-              className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
-            >
-              {OPTIMIZE_TEMPLATE_GROUPS[1].templates.map((t) => (
-                <option key={t.value} value={t.value}>{t.label}</option>
-              ))}
-            </select>
-            {(() => {
-              const current = OPTIMIZE_TEMPLATE_GROUPS[1].templates.find(t => t.value === config.templateId);
-              return current ? <p className="text-xs text-gray-500 mt-1">{current.desc}</p> : null;
+              const templates = templateCategory === 'text2image' ? TEXT2IMAGE_TEMPLATES : IMAGE2IMAGE_TEMPLATES;
+              const currentTemplate = templates.find(t => t.value === config.templateId);
+              return (
+                <>
+                  <select
+                    value={currentTemplate ? config.templateId : templates[0].value}
+                    onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
+                    className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
+                  >
+                    {templates.map((t) => (
+                      <option key={t.value} value={t.value}>{t.label}</option>
+                    ))}
+                  </select>
+                  {currentTemplate && <p className="text-xs text-gray-500 mt-1">{currentTemplate.desc}</p>}
+                </>
+              );
             })()}
           </div>
 

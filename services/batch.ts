@@ -10,16 +10,16 @@ export const MAX_BATCH_CONCURRENCY = 8;
 export const MAX_BATCH_COUNT_PER_PROMPT = 4;
 
 /**
- * 解析多行提示词为批量任务
- * - 使用 --- 分隔符明确区分多个提示词
- * - JSON/结构化文本自动识别为单个提示词
- * - 普通多行文本按行分割
+ * 解析提示词为批量任务
+ * 
+ * 仅在用户显式使用 `---` 分隔符时才拆分为多个提示词。
+ * 普通换行始终视为单个提示词的一部分，避免优化后的多行提示词被误拆。
  */
 export const parsePromptsToBatch = (text: string): string[] => {
   const trimmed = text.trim();
   if (!trimmed) return [];
 
-  // 1. 优先检测是否使用了分隔符 ---
+  // 仅当显式使用 --- 分隔符时才拆分为批量任务
   if (trimmed.includes('\n---\n') || trimmed.includes('\n---')) {
     return trimmed
       .split(/\n-{3,}\n?/)
@@ -27,26 +27,8 @@ export const parsePromptsToBatch = (text: string): string[] => {
       .filter((s) => s.length > 0);
   }
 
-  // 2. 检测是否是 JSON 格式（以 { 或 [ 开头）
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return [trimmed];
-  }
-
-  // 3. 检测是否包含多行结构化内容（如缩进、引号、括号开头）
-  const lines = trimmed.split('\n');
-  const hasStructuredContent = lines.some(
-    (line) =>
-      line.startsWith('  ') ||
-      line.startsWith('\t') ||
-      /^\s*["'{[]/.test(line)
-  );
-
-  if (hasStructuredContent) {
-    return [trimmed];
-  }
-
-  // 4. 默认按行分割
-  return lines.map((line) => line.trim()).filter((line) => line.length > 0);
+  // 其他情况一律视为单个提示词
+  return [trimmed];
 };
 
 /**

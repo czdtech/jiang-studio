@@ -335,6 +335,17 @@ export const getPortfolio = async (): Promise<GeneratedImage[]> => {
   });
 };
 
+/** 按 scope 获取最近的图片（用于结果区域历史恢复） */
+export const getRecentImagesByScope = async (
+  scope: ProviderScope,
+  limit = 50
+): Promise<GeneratedImage[]> => {
+  const all = await getPortfolio(); // 已按 timestamp desc 排序
+  return all
+    .filter(img => img.sourceScope === scope)
+    .slice(0, limit);
+};
+
 export const deleteImageFromPortfolio = async (id: string): Promise<void> => {
   const db = await openDB();
   return new Promise((resolve, reject) => {

@@ -108,7 +108,15 @@ export const ImageGrid = ({
           const idx = successIndex;
 
           return (
-            <div key={slot.id} className="relative w-full h-full group">
+            <div
+              key={slot.id}
+              className="relative w-full h-full group"
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData('application/x-nano-ref-image', img.base64);
+                e.dataTransfer.effectAllowed = 'copy';
+              }}
+            >
               <div
                 role="button"
                 tabIndex={0}
@@ -121,7 +129,7 @@ export const ImageGrid = ({
                   }
                 }}
               >
-                <img src={img.base64} alt={img.prompt} className="w-full h-auto block" />
+                <img src={img.base64} alt={img.prompt} draggable={false} className="w-full h-auto block" />
 
                 <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button
@@ -161,7 +169,15 @@ export const ImageGrid = ({
         ))
       )}
       {images.map((img, idx) => (
-        <div key={img.id} className="relative w-full h-full group">
+        <div
+          key={img.id}
+          className="relative w-full h-full group"
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData('application/x-nano-ref-image', img.base64);
+            e.dataTransfer.effectAllowed = 'copy';
+          }}
+        >
           <div
             role="button"
             tabIndex={0}
@@ -174,7 +190,7 @@ export const ImageGrid = ({
               }
             }}
           >
-            <img src={img.base64} alt={img.prompt} className="w-full h-auto block" />
+            <img src={img.base64} alt={img.prompt} draggable={false} className="w-full h-auto block" />
 
             <div className="absolute inset-x-0 bottom-2 flex justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
               <button

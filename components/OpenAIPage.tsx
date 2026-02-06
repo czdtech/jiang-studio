@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Plus, ChevronDown, X, Plug, Star, Trash2, Sparkles, Image as ImageIcon, Wand2 } from 'lucide-react';
+import { RefreshCw, Plus, ChevronDown, ChevronRight, X, Plug, Star, Trash2, Sparkles, Image as ImageIcon, Wand2, FolderOpen, History } from 'lucide-react';
 import {
   OpenAISettings,
   GeneratedImage,
@@ -18,6 +18,7 @@ import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { RefImageRow } from './RefImageRow';
 import { SamplePromptChips } from './SamplePromptChips';
+import { PortfolioPicker } from './PortfolioPicker';
 import {
   getFavoriteButtonStyles,
   getRefImageButtonStyles,
@@ -28,6 +29,7 @@ import {
 import {
   getPromptOptimizerConfig,
   setPromptOptimizerConfig,
+  getRecentImagesByScope,
 } from '../services/db';
 import { useProviderManagement } from '../hooks/useProviderManagement';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
@@ -219,6 +221,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
+  const [showMobilePortfolio, setShowMobilePortfolio] = useState(false);
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
@@ -257,8 +260,22 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const [modelsHint, setModelsHint] = useState<string>('');
 
   // Results
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  // Results: 本轮生成 + 历史记录（折叠）
+  const [currentImages, setCurrentImages] = useState<GeneratedImage[]>([]);
+  const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
+
+  // 从 Portfolio 恢复历史生成记录
+  useEffect(() => {
+    if (!activeProviderId) return;
+    let cancelled = false;
+    void getRecentImagesByScope(scope).then(images => {
+      if (cancelled) return;
+      setHistoryImages(images);
+    });
+    return () => { cancelled = true; };
+  }, [activeProviderId]);
 
   // Batch Hook
   const {
@@ -542,7 +559,6 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       if (antigravityConfig?.imageSize) currentParams.imageSize = antigravityConfig.imageSize;
 
       const slotIds = Array.from({ length: currentParams.count }, () => crypto.randomUUID());
-      setGeneratedImages([]);
       setGeneratedSlots(slotIds.map((id) => ({ id, status: 'pending' })));
 
       const outcomes = await generateImages(currentParams, settings, {
@@ -568,7 +584,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
         .map((s) => s.image);
 
       setGeneratedSlots(nextSlots);
-      setGeneratedImages(successImages);
+      setCurrentImages(prev => [...successImages, ...prev]);
 
       for (const img of successImages) {
         await saveImage(img);
@@ -651,6 +667,10 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   const removeRefImage = (index: number) => {
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const addRefImages = useCallback((dataUrls: string[]) => {
+    setRefImages((prev) => [...prev, ...dataUrls].slice(0, MAX_REF_IMAGES));
+  }, []);
 
   const canGenerate =
     !!prompt.trim() &&
@@ -785,7 +805,18 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               <ImageIcon className="w-4 h-4 text-banana-500" />
               <span className="aurora-section-title">生成结果</span>
             </div>
-            <span className="aurora-badge aurora-badge-gold">{variant === 'antigravity_tools' ? 'Antigravity' : 'OpenAI'}</span>
+            <div className="flex items-center gap-2">
+              {currentImages.length > 0 && !isBusy && (
+                <button
+                  type="button"
+                  onClick={() => setCurrentImages([])}
+                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  清空本轮
+                </button>
+              )}
+              <span className="aurora-badge aurora-badge-gold">{variant === 'antigravity_tools' ? 'Antigravity' : 'OpenAI'}</span>
+            </div>
           </div>
           <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
             {/* 批量模式进度条 */}
@@ -851,14 +882,38 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                 onEdit={onEdit}
               />
             ) : (
-              <ImageGrid
-                images={generatedImages}
-                slots={generatedSlots}
-                isGenerating={isGenerating}
-                params={params}
-                onImageClick={onImageClick}
-                onEdit={onEdit}
-              />
+              <>
+                <ImageGrid
+                  images={currentImages}
+                  slots={generatedSlots}
+                  isGenerating={isGenerating}
+                  params={params}
+                  onImageClick={onImageClick}
+                  onEdit={onEdit}
+                />
+                {historyImages.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setHistoryExpanded(v => !v)}
+                      className="w-full flex items-center gap-2 py-2 px-1 text-xs text-text-muted hover:text-text-primary transition-colors border-t border-dark-border mt-3"
+                    >
+                      {historyExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      <History className="w-3.5 h-3.5" />
+                      <span>历史记录 ({historyImages.length}张)</span>
+                    </button>
+                    {historyExpanded && (
+                      <ImageGrid
+                        images={historyImages}
+                        isGenerating={false}
+                        params={params}
+                        onImageClick={onImageClick}
+                        onEdit={onEdit}
+                      />
+                    )}
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -897,6 +952,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             maxImages={MAX_REF_IMAGES}
             onFileUpload={handleFileUpload}
             onRemove={removeRefImage}
+            onAddImages={addRefImages}
           />
 
           <div className="aurora-textarea-wrapper flex-1">
@@ -950,11 +1006,29 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                     ))}
                   </div>
                 )}
-                <label className="flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  添加参考图
-                  <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-                </label>
+                <div className="flex gap-1.5">
+                  <label className="flex-1 flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    添加参考图
+                    <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                  </label>
+                  <div className="relative flex-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowMobilePortfolio((v) => !v)}
+                      className="w-full flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5 mr-1" />
+                      作品集
+                    </button>
+                    {showMobilePortfolio && (
+                      <PortfolioPicker
+                        onPick={(base64) => addRefImages([base64])}
+                        onClose={() => setShowMobilePortfolio(false)}
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

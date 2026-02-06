@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, Sparkles, Image as ImageIcon, Wand2 } from 'lucide-react';
+import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, ChevronRight, Sparkles, Image as ImageIcon, Wand2, FolderOpen, History } from 'lucide-react';
 import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
@@ -10,6 +10,7 @@ import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { RefImageRow } from './RefImageRow';
 import { SamplePromptChips } from './SamplePromptChips';
+import { PortfolioPicker } from './PortfolioPicker';
 import {
   getFavoriteButtonStyles,
   getRefImageButtonStyles,
@@ -24,6 +25,7 @@ import {
   getPromptOptimizerConfig,
   setPromptOptimizerConfig,
   getProviders as getProvidersFromDb,
+  getRecentImagesByScope,
   setActiveProviderId as setActiveProviderIdInDb,
   upsertDraft as upsertDraftInDb,
   upsertProvider as upsertProviderInDb,
@@ -133,6 +135,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
+  const [showMobilePortfolio, setShowMobilePortfolio] = useState(false);
 
   // Kie AI 预设模型列表（Kie AI 不支持 /v1/models 端点）
   // 参考: https://kie.ai/nano-banana, https://kie.ai/nano-banana-pro, https://kie.ai/google/imagen4
@@ -187,8 +190,22 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   });
 
   // Results
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  // Results: 本轮生成 + 历史记录（折叠）
+  const [currentImages, setCurrentImages] = useState<GeneratedImage[]>([]);
+  const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
+
+  // 从 Portfolio 恢复历史生成记录
+  useEffect(() => {
+    if (!activeProviderId) return;
+    let cancelled = false;
+    void getRecentImagesByScope(scope).then(images => {
+      if (cancelled) return;
+      setHistoryImages(images);
+    });
+    return () => { cancelled = true; };
+  }, [activeProviderId]);
 
   // Batch Hook
   const {
@@ -484,7 +501,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
       };
 
       const slotIds = Array.from({ length: currentParams.count }, () => crypto.randomUUID());
-      setGeneratedImages([]);
       setGeneratedSlots(slotIds.map((id) => ({ id, status: 'pending' })));
 
       const outcomes = await generateImages(currentParams, settings, { signal: controller.signal });
@@ -508,7 +524,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
         .map((s) => s.image);
 
       setGeneratedSlots(nextSlots);
-      setGeneratedImages(successImages);
+      setCurrentImages(prev => [...successImages, ...prev]);
 
       for (const img of successImages) {
         await saveImage(img);
@@ -586,6 +602,10 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const removeRefImage = (index: number) => {
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const addRefImages = useCallback((dataUrls: string[]) => {
+    setRefImages((prev) => [...prev, ...dataUrls].slice(0, MAX_REF_IMAGES));
+  }, []);
 
   const canGenerate =
     !!prompt.trim() && !!settings.apiKey.trim() && !!settings.baseUrl.trim() && !!customModel.trim();
@@ -713,7 +733,18 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               <ImageIcon className="w-4 h-4 text-banana-500" />
               <span className="aurora-section-title">生成结果</span>
             </div>
-            <span className="aurora-badge aurora-badge-gold">Kie AI</span>
+            <div className="flex items-center gap-2">
+              {currentImages.length > 0 && !isBusy && (
+                <button
+                  type="button"
+                  onClick={() => setCurrentImages([])}
+                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  清空本轮
+                </button>
+              )}
+              <span className="aurora-badge aurora-badge-gold">Kie AI</span>
+            </div>
           </div>
           <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
             {/* 批量模式进度条 */}
@@ -779,14 +810,38 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                 onEdit={onEdit}
               />
             ) : (
-              <ImageGrid
-                images={generatedImages}
-                slots={generatedSlots}
-                isGenerating={isGenerating}
-                params={params}
-                onImageClick={onImageClick}
-                onEdit={onEdit}
-              />
+              <>
+                <ImageGrid
+                  images={currentImages}
+                  slots={generatedSlots}
+                  isGenerating={isGenerating}
+                  params={params}
+                  onImageClick={onImageClick}
+                  onEdit={onEdit}
+                />
+                {historyImages.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setHistoryExpanded(v => !v)}
+                      className="w-full flex items-center gap-2 py-2 px-1 text-xs text-text-muted hover:text-text-primary transition-colors border-t border-dark-border mt-3"
+                    >
+                      {historyExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      <History className="w-3.5 h-3.5" />
+                      <span>历史记录 ({historyImages.length}张)</span>
+                    </button>
+                    {historyExpanded && (
+                      <ImageGrid
+                        images={historyImages}
+                        isGenerating={false}
+                        params={params}
+                        onImageClick={onImageClick}
+                        onEdit={onEdit}
+                      />
+                    )}
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -825,6 +880,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             maxImages={MAX_REF_IMAGES}
             onFileUpload={handleFileUpload}
             onRemove={removeRefImage}
+            onAddImages={addRefImages}
           />
 
           <div className="aurora-textarea-wrapper flex-1">
@@ -878,11 +934,29 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     ))}
                   </div>
                 )}
-                <label className="flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  添加参考图
-                  <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-                </label>
+                <div className="flex gap-1.5">
+                  <label className="flex-1 flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    添加参考图
+                    <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                  </label>
+                  <div className="relative flex-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowMobilePortfolio((v) => !v)}
+                      className="w-full flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5 mr-1" />
+                      作品集
+                    </button>
+                    {showMobilePortfolio && (
+                      <PortfolioPicker
+                        onPick={(base64) => addRefImages([base64])}
+                        onClose={() => setShowMobilePortfolio(false)}
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>

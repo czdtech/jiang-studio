@@ -66,7 +66,15 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
               {images.map((img, imgIdx) => {
                 const isSelected = selectedImageIds.includes(img.id);
                 return (
-                <div key={img.id} className="relative group">
+                <div
+                  key={img.id}
+                  className="relative group"
+                  draggable
+                  onDragStart={(e) => {
+                    e.dataTransfer.setData('application/x-nano-ref-image', img.base64);
+                    e.dataTransfer.effectAllowed = 'copy';
+                  }}
+                >
                   <div
                     role="button"
                     tabIndex={0}
@@ -79,7 +87,7 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
                       }
                     }}
                   >
-                    <img src={img.base64} alt={img.prompt} className="aurora-batch-card-image" />
+                    <img src={img.base64} alt={img.prompt} draggable={false} className="aurora-batch-card-image" />
                     <button
                       type="button"
                       aria-label={isSelected ? '取消选中图片' : '选中图片'}

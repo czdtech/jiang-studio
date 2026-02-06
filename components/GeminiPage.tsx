@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Settings, RefreshCw, Plus, ChevronDown, X, Star, Trash2, Sparkles, Image as ImageIcon, Wand2, ImagePlus } from 'lucide-react';
+import { Settings, RefreshCw, Plus, ChevronDown, ChevronRight, X, Star, Trash2, Sparkles, Image as ImageIcon, Wand2, ImagePlus, FolderOpen, History } from 'lucide-react';
 import {
   GeminiSettings,
   GeneratedImage,
@@ -18,6 +18,7 @@ import { BatchImageGrid } from './BatchImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
 import { SamplePromptChips } from './SamplePromptChips';
+import { PortfolioPicker } from './PortfolioPicker';
 import {
   getFavoriteButtonStyles,
   getRefImageButtonStyles,
@@ -28,6 +29,7 @@ import {
 import {
   getPromptOptimizerConfig,
   setPromptOptimizerConfig,
+  getRecentImagesByScope,
 } from '../services/db';
 import { useProviderManagement } from '../hooks/useProviderManagement';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
@@ -140,6 +142,9 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
+  const [isDragOverRef, setIsDragOverRef] = useState(false);
+  const [showPortfolioPicker, setShowPortfolioPicker] = useState(false);
+  const [showMobilePortfolio, setShowMobilePortfolio] = useState(false);
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
@@ -182,8 +187,21 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     };
   }, []);
 
-  // Results
-  const [generatedImages, setGeneratedImages] = useState<GeneratedImage[]>([]);
+  // Results: 本轮生成 + 历史记录（折叠）
+  const [currentImages, setCurrentImages] = useState<GeneratedImage[]>([]);
+  const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
+  // 从 Portfolio 恢复历史生成记录
+  useEffect(() => {
+    if (!activeProviderId) return;
+    let cancelled = false;
+    void getRecentImagesByScope(scope).then(images => {
+      if (cancelled) return;
+      setHistoryImages(images);
+    });
+    return () => { cancelled = true; };
+  }, [activeProviderId]);
 
   // Batch Hook
   const {
@@ -312,8 +330,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         model: normalizeGeminiModel(params.model),
       };
 
-      setGeneratedImages([]);
-
       const outcomes = await generateImages(
         currentParams,
         {
@@ -338,7 +354,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
           .filter(o => !o.ok)
           .map(o => (o as any).error as string);
 
-      setGeneratedImages(successImages);
+      setCurrentImages(prev => [...successImages, ...prev]);
 
       for (const img of successImages) {
         await saveImage(img);
@@ -429,6 +445,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   const removeRefImage = (index: number) => {
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const addRefImages = useCallback((dataUrls: string[]) => {
+    const max = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
+    setRefImages((prev) => [...prev, ...dataUrls].slice(0, max));
+  }, [params.model]);
 
   const maxRefImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
   const canGenerate = !!prompt.trim() && !!settings.apiKey.trim();
@@ -542,7 +563,18 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
               <ImageIcon className="w-4 h-4 text-banana-500" />
               <span className="aurora-section-title">生成结果</span>
             </div>
-            <span className="aurora-badge aurora-badge-gold">Nano Banana Pro</span>
+            <div className="flex items-center gap-2">
+              {currentImages.length > 0 && !isBusy && (
+                <button
+                  type="button"
+                  onClick={() => setCurrentImages([])}
+                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  清空本轮
+                </button>
+              )}
+              <span className="aurora-badge aurora-badge-gold">Nano Banana Pro</span>
+            </div>
           </div>
           <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
             {/* 批量模式进度条 */}
@@ -608,13 +640,37 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                 onEdit={onEdit}
               />
             ) : (
-              <ImageGrid
-                images={generatedImages}
-                isGenerating={isGenerating}
-                params={params}
-                onImageClick={onImageClick}
-                onEdit={onEdit}
-              />
+              <>
+                <ImageGrid
+                  images={currentImages}
+                  isGenerating={isGenerating}
+                  params={params}
+                  onImageClick={onImageClick}
+                  onEdit={onEdit}
+                />
+                {historyImages.length > 0 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setHistoryExpanded(v => !v)}
+                      className="w-full flex items-center gap-2 py-2 px-1 text-xs text-text-muted hover:text-text-primary transition-colors border-t border-dark-border mt-3"
+                    >
+                      {historyExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                      <History className="w-3.5 h-3.5" />
+                      <span>历史记录 ({historyImages.length}张)</span>
+                    </button>
+                    {historyExpanded && (
+                      <ImageGrid
+                        images={historyImages}
+                        isGenerating={false}
+                        params={params}
+                        onImageClick={onImageClick}
+                        onEdit={onEdit}
+                      />
+                    )}
+                  </>
+                )}
+              </>
             )}
           </div>
         </div>
@@ -649,12 +705,45 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         {/* 中列：提示词输入（与画布对齐） */}
         <div className="aurora-prompt-input">
           {/* 参考图行（大屏显示，位于输入框上方） */}
-          <div className="aurora-ref-row">
+          <div
+            className={`aurora-ref-row ${isDragOverRef ? 'ring-2 ring-banana-500/60 rounded-lg' : ''}`}
+            onDragOver={(e) => {
+              if (e.dataTransfer.types.includes('application/x-nano-ref-image')) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                setIsDragOverRef(true);
+              }
+            }}
+            onDragLeave={() => setIsDragOverRef(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDragOverRef(false);
+              const data = e.dataTransfer.getData('application/x-nano-ref-image');
+              if (data) addRefImages([data]);
+            }}
+          >
             <label className="aurora-ref-add">
               <ImagePlus className="w-4 h-4" />
               <span>添加</span>
               <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
             </label>
+            <div className="relative">
+              <button
+                type="button"
+                className="aurora-ref-add"
+                onClick={() => setShowPortfolioPicker((v) => !v)}
+                title="从作品集选择"
+              >
+                <FolderOpen className="w-4 h-4" />
+                <span>作品集</span>
+              </button>
+              {showPortfolioPicker && (
+                <PortfolioPicker
+                  onPick={(base64) => addRefImages([base64])}
+                  onClose={() => setShowPortfolioPicker(false)}
+                />
+              )}
+            </div>
             <div className="aurora-ref-count">{refImages.length}/{maxRefImages}</div>
             <div className="aurora-ref-list">
               {refImages.map((img, idx) => (
@@ -724,11 +813,29 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                     ))}
                   </div>
                 )}
-                <label className="flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
-                  <Plus className="w-3.5 h-3.5 mr-1" />
-                  添加参考图
-                  <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-                </label>
+                <div className="flex gap-1.5">
+                  <label className="flex-1 flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
+                    <Plus className="w-3.5 h-3.5 mr-1" />
+                    添加参考图
+                    <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                  </label>
+                  <div className="relative flex-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowMobilePortfolio((v) => !v)}
+                      className="w-full flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors"
+                    >
+                      <FolderOpen className="w-3.5 h-3.5 mr-1" />
+                      作品集
+                    </button>
+                    {showMobilePortfolio && (
+                      <PortfolioPicker
+                        onPick={(base64) => addRefImages([base64])}
+                        onClose={() => setShowMobilePortfolio(false)}
+                      />
+                    )}
+                  </div>
+                </div>
               </div>
             )}
           </div>
