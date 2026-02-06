@@ -191,7 +191,7 @@ const App = () => {
 
       {/* Main Content - Top margin for header */}
       <main className="min-h-screen pb-14 md:pb-0 md:pt-14">
-        <div className="h-[calc(100vh-56px)] md:h-[calc(100vh-56px)] max-w-[1400px] mx-auto">
+        <div className="h-[calc(100vh-56px)] md:h-[calc(100vh-56px)]">
           {mountedTabs.gemini && (
             <div className={activeTab === 'gemini' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'gemini'}>
               <GeminiPage
