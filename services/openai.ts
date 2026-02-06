@@ -385,11 +385,14 @@ const callGeminiChatRelayAPI = async (
   const url = `${cleanBaseUrl}/v1/chat/completions`;
   const contents = buildGeminiContents(params);
   const imageConfig = buildGeminiImageConfig(params);
+  // messages 使用标准 OpenAI 格式（包含 image_url），确保代理能正确接收参考图
+  // contents 使用 Gemini 原生格式，供支持 Gemini 协议的代理使用
+  const messageContent = buildMessageContent(params);
   const body: Record<string, unknown> = {
     model: params.model,
     stream: true,
     max_tokens: 8192,
-    messages: [{ role: 'user', content: params.prompt }],
+    messages: [{ role: 'user', content: messageContent }],
     contents,
     extra_body: {
       generationConfig: {
