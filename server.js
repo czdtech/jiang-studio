@@ -21,7 +21,7 @@ app.use('/mcp', createProxyMiddleware({
 app.use(express.static(path.join(__dirname, 'dist')));
 
 // SPA 回退：所有未匹配路由返回 index.html
-app.get('*', (req, res) => {
+app.use((req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
