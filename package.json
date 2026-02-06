@@ -4,6 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "node server.js",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -15,6 +16,8 @@
   "dependencies": {
     "@google/genai": "^1.38.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^3.0.5",
     "lucide-react": "^0.563.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
