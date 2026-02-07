@@ -79,18 +79,74 @@ export async function optimizeUserPrompt(prompt: string, templateId?: string): P
 }
 
 /**
+ * 将 base64 图片缩小到指定最大尺寸，返回压缩后的 base64（无 data URI 前缀）
+ * 用于视觉迭代时减小 MCP 请求体积
+ */
+function resizeImageBase64(base64: string, maxSize = 256): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(base64); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      // 输出 JPEG 质量 0.6，通常 < 30KB
+      const result = canvas.toDataURL('image/jpeg', 0.6);
+      resolve(result.replace(/^data:image\/\w+;base64,/, ''));
+    };
+    img.onerror = () => reject(new Error('图片缩放失败'));
+    // 确保 src 有 data URI 前缀
+    img.src = base64.startsWith('data:') ? base64 : `data:image/png;base64,${base64}`;
+  });
+}
+
+/**
  * 迭代优化提示词（迭代助手使用）
  *
  * @param prompt 当前提示词
  * @param requirement 用户的修改需求
  * @returns 优化后的提示词
  */
-export async function iteratePrompt(prompt: string, requirement: string, templateId?: string): Promise<string> {
+export async function iteratePrompt(
+  prompt: string,
+  requirement: string,
+  templateId?: string,
+  _context?: {
+    targetImageBase64?: string;
+    targetImagePrompt?: string;
+  },
+): Promise<string> {
   const args: Record<string, unknown> = { prompt, requirements: requirement };
   if (templateId) {
     args.template = templateId;
   }
-  return callTool('iterate-prompt', args);
+
+  // 视觉迭代：压缩图片后传递给 MCP 服务（服务端可选支持）
+  if (_context?.targetImageBase64) {
+    try {
+      args.targetImage = await resizeImageBase64(_context.targetImageBase64);
+    } catch {
+      // 压缩失败则跳过图片，仅用文本迭代
+    }
+  }
+  if (_context?.targetImagePrompt) args.targetImagePrompt = _context.targetImagePrompt;
+
+  try {
+    return await callTool('iterate-prompt', args);
+  } catch (error) {
+    // 413 Payload Too Large：降级为纯文本迭代
+    const msg = error instanceof Error ? error.message : '';
+    if (msg.includes('413') || msg.includes('Payload Too Large')) {
+      delete args.targetImage;
+      return callTool('iterate-prompt', args);
+    }
+    throw error;
+  }
 }
 
 /**

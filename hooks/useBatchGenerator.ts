@@ -63,7 +63,7 @@ export const useBatchGenerator = ({
     const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
     const [isBatchMode, setIsBatchMode] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
-    const [batchConfig, setBatchConfig] = useState<BatchConfig>({ concurrency: 2, countPerPrompt: 1 });
+    const [batchConfig, setBatchConfig] = useState<BatchConfig>({ concurrency: 1, countPerPrompt: 1 });
     const [selectedBatchImageIds, setSelectedBatchImageIds] = useState<string[]>([]);
 
     const batchAbortControllerRef = useRef<AbortController | null>(null);

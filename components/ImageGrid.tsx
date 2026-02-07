@@ -14,8 +14,13 @@ interface ImageGridProps {
   isGenerating: boolean;
   params: GenerationParams;
   expectedCount?: number;
+  maxColumns?: number;
+  minColumns?: number;
+  gap?: number;
   onImageClick: (images: GeneratedImage[], index: number) => void;
   onEdit: (image: GeneratedImage) => void;
+  /** 迭代回调（点击图片迭代按钮时触发） */
+  onIterate?: (image: GeneratedImage, index: number, allImages: GeneratedImage[]) => void;
 }
 
 const GRID_GAP = 12;
@@ -27,8 +32,12 @@ export const ImageGrid = ({
   isGenerating,
   params,
   expectedCount,
+  maxColumns = MAX_COLUMNS,
+  minColumns = 2,
+  gap = GRID_GAP,
   onImageClick,
-  onEdit
+  onEdit,
+  onIterate,
 }: ImageGridProps) => {
   const hasSlots = !!slots && slots.length > 0;
   const showEmptyState = !hasSlots && images.length === 0 && !isGenerating;
@@ -36,16 +45,16 @@ export const ImageGrid = ({
   const displayCards = Math.max(totalCards, 1);
   const remainingCards = Math.max(totalCards - images.length, 0);
 
-  const columns = Math.min(MAX_COLUMNS, Math.max(1, displayCards));
-  const fullWidth = columns === MAX_COLUMNS;
-  const shrinkWidth = `calc((100% - ${GRID_GAP * 3}px) / ${MAX_COLUMNS} * ${columns} + ${GRID_GAP}px * ${columns - 1})`;
+  const columns = Math.min(maxColumns, Math.max(minColumns, displayCards));
+  const fullWidth = columns === maxColumns;
+  const shrinkWidth = `calc((100% - ${gap * (maxColumns - 1)}px) / ${maxColumns} * ${columns} + ${gap}px * ${columns - 1})`;
   const gridStyle: React.CSSProperties = {
     gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-    gap: `${GRID_GAP}px`,
+    gap: `${gap}px`,
     alignItems: 'start',
     width: '100%',
     maxWidth: fullWidth ? '100%' : shrinkWidth,
-    marginRight: 'auto',
+    margin: '0 auto',
   };
 
   const renderGrid = (children: React.ReactNode) => (
@@ -139,6 +148,15 @@ export const ImageGrid = ({
                   >
                     <Edit className="w-4 h-4" />
                   </button>
+                  {onIterate && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onIterate(img, idx, successImages); }}
+                      aria-label="迭代此图片"
+                      className="h-8 w-8 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-banana-500 transition-colors flex items-center justify-center"
+                    >
+                      <Sparkles className="w-4 h-4" />
+                    </button>
+                  )}
                   <a
                     href={img.base64}
                     download={`nano-banana-${img.id}.png`}
@@ -200,6 +218,15 @@ export const ImageGrid = ({
               >
                 <Edit className="w-4 h-4" />
               </button>
+              {onIterate && (
+                <button
+                  onClick={(e) => { e.stopPropagation(); onIterate(img, idx, images); }}
+                  aria-label="迭代此图片"
+                  className="h-8 w-8 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-banana-500 transition-colors flex items-center justify-center"
+                >
+                  <Sparkles className="w-4 h-4" />
+                </button>
+              )}
               <a
                 href={img.base64}
                 download={`nano-banana-${img.id}.png`}

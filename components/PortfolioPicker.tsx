@@ -1,18 +1,34 @@
-import React, { useEffect, useState } from 'react';
-import { Image as ImageIcon, X } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Image as ImageIcon, X, Check } from 'lucide-react';
 import { GeneratedImage } from '../types';
 import { getPortfolio } from '../services/db';
 
 interface PortfolioPickerProps {
   onPick: (base64: string) => void;
   onClose: () => void;
+  /** 当前已选中的参考图（base64），用于展示选中态和 toggle 行为 */
+  selectedImages?: string[];
 }
 
 const MAX_DISPLAY = 30;
+/** 鼠标移出后延迟关闭的毫秒数，避免跨间隙移动误触 */
+const CLOSE_DELAY_MS = 200;
 
-export const PortfolioPicker: React.FC<PortfolioPickerProps> = ({ onPick, onClose }) => {
+export const PortfolioPicker: React.FC<PortfolioPickerProps> = ({ onPick, onClose, selectedImages }) => {
   const [images, setImages] = useState<GeneratedImage[]>([]);
   const [loading, setLoading] = useState(true);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout>>();
+
+  const handleMouseEnter = useCallback(() => {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = undefined;
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    closeTimerRef.current = setTimeout(onClose, CLOSE_DELAY_MS);
+  }, [onClose]);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,11 +38,18 @@ export const PortfolioPicker: React.FC<PortfolioPickerProps> = ({ onPick, onClos
       setImages(all.slice(0, MAX_DISPLAY));
       setLoading(false);
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
   }, []);
 
   return (
-    <div className="absolute bottom-full left-0 mb-2 w-72 bg-graphite border border-ash rounded-[var(--radius-md)] p-3 shadow-[var(--shadow-floating)] z-20">
+    <div
+      className="absolute bottom-full left-0 mb-2 w-72 bg-graphite border border-ash rounded-[var(--radius-md)] p-3 shadow-[var(--shadow-floating)] z-20"
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
+    >
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-text-muted">从作品集选择</span>
         <button
@@ -47,22 +70,36 @@ export const PortfolioPicker: React.FC<PortfolioPickerProps> = ({ onPick, onClos
         </div>
       ) : (
         <div className="grid grid-cols-5 gap-1.5 max-h-48 overflow-y-auto">
-          {images.map((img) => (
-            <button
-              key={img.id}
-              type="button"
-              className="aspect-square rounded-[var(--radius-sm)] overflow-hidden border border-ash hover:border-banana-500 transition-colors cursor-pointer"
-              onClick={() => onPick(img.base64)}
-              title={img.prompt}
-            >
-              <img
-                src={img.base64}
-                alt={img.prompt}
-                className="w-full h-full object-cover"
-                draggable={false}
-              />
-            </button>
-          ))}
+          {images.map((img) => {
+            const isSelected = selectedImages?.includes(img.base64) ?? false;
+            return (
+              <button
+                key={img.id}
+                type="button"
+                className={`relative aspect-square rounded-[var(--radius-sm)] overflow-hidden border-2 transition-colors cursor-pointer ${
+                  isSelected
+                    ? 'border-banana-500 ring-1 ring-banana-500/30'
+                    : 'border-ash hover:border-banana-500'
+                }`}
+                onClick={() => onPick(img.base64)}
+                title={img.prompt}
+              >
+                <img
+                  src={img.base64}
+                  alt={img.prompt}
+                  className={`w-full h-full object-cover transition-opacity ${isSelected ? 'opacity-75' : ''}`}
+                  draggable={false}
+                />
+                {isSelected && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-banana-500/20">
+                    <div className="w-5 h-5 rounded-full bg-banana-500 flex items-center justify-center">
+                      <Check className="w-3 h-3 text-void" />
+                    </div>
+                  </div>
+                )}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>

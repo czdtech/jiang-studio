@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ImagePlus, FolderOpen, X } from 'lucide-react';
 import { PortfolioPicker } from './PortfolioPicker';
 
@@ -19,6 +19,7 @@ export const RefImageRow: React.FC<RefImageRowProps> = ({
 }) => {
   const [isDragOver, setIsDragOver] = useState(false);
   const [showPortfolio, setShowPortfolio] = useState(false);
+  const portfolioTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     if (e.dataTransfer.types.includes('application/x-nano-ref-image')) {
@@ -46,9 +47,14 @@ export const RefImageRow: React.FC<RefImageRowProps> = ({
 
   const handlePortfolioPick = useCallback(
     (base64: string) => {
-      onAddImages([base64]);
+      const idx = images.indexOf(base64);
+      if (idx >= 0) {
+        onRemove(idx);
+      } else {
+        onAddImages([base64]);
+      }
     },
-    [onAddImages]
+    [images, onRemove, onAddImages]
   );
 
   return (
@@ -60,10 +66,24 @@ export const RefImageRow: React.FC<RefImageRowProps> = ({
     >
       <label className="aurora-ref-add">
         <ImagePlus className="w-4 h-4" />
-        <span>添加</span>
+        <span>本地上传</span>
         <input type="file" className="hidden" accept="image/*" multiple onChange={onFileUpload} />
       </label>
-      <div className="relative">
+      <div
+        className="relative"
+        onMouseEnter={() => {
+          if (portfolioTimerRef.current) {
+            clearTimeout(portfolioTimerRef.current);
+            portfolioTimerRef.current = undefined;
+          }
+          setShowPortfolio(true);
+        }}
+        onMouseLeave={() => {
+          portfolioTimerRef.current = setTimeout(() => {
+            setShowPortfolio(false);
+          }, 250);
+        }}
+      >
         <button
           type="button"
           className="aurora-ref-add"
@@ -75,6 +95,7 @@ export const RefImageRow: React.FC<RefImageRowProps> = ({
         </button>
         {showPortfolio && (
           <PortfolioPicker
+            selectedImages={images}
             onPick={handlePortfolioPick}
             onClose={() => setShowPortfolio(false)}
           />

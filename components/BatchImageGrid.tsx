@@ -10,6 +10,8 @@ interface BatchImageGridProps {
   onToggleSelect: (imageId: string) => void;
   onImageClick: (images: GeneratedImage[], index: number) => void;
   onEdit: (image: GeneratedImage) => void;
+  /** 迭代回调（点击图片迭代按钮时触发） */
+  onIterate?: (image: GeneratedImage, index: number, allImages: GeneratedImage[]) => void;
 }
 
 export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
@@ -19,38 +21,41 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
   onToggleSelect,
   onImageClick,
   onEdit,
+  onIterate,
 }) => {
   const columns = Math.min(4, Math.max(1, countPerPrompt));
-  const fullWidth = columns === 4;
   const gap = 12;
-  const shrinkWidth = `calc((100% - ${gap * 3}px) / 4 * ${columns} + ${gap}px * ${columns - 1})`;
+  // 整行居中：36px(角标) + 12px(行gap) + 图片区域宽度
+  // 以 8 列为基准计算宽度，使图片保持紧凑
+  // 图片列宽 = (父容器宽 - 48px行开销 - 7*12px列间距) / 8 = (100% - 132px) / 8
+  const rowMaxWidth = `calc(48px + (100% - 132px) / 8 * ${columns} + ${gap * (columns - 1)}px)`;
   const orderedImages = useMemo(
-    () => tasks.flatMap((t) => (t.images || []).slice(0, countPerPrompt)),
-    [tasks, countPerPrompt]
+    () => tasks.flatMap((t) => t.images || []),
+    [tasks]
   );
 
   const rowOffsets = useMemo(() => {
     let offset = 0;
     return tasks.map((t) => {
       const start = offset;
-      offset += (t.images || []).slice(0, countPerPrompt).length;
+      offset += (t.images || []).length;
       return start;
     });
-  }, [tasks, countPerPrompt]);
+  }, [tasks]);
 
   if (tasks.length === 0) return null;
 
   return (
     <div className="aurora-batch-grid">
       {tasks.map((task, rowIdx) => {
-        const images = (task.images || []).slice(0, countPerPrompt);
+        const images = task.images || [];
         const baseIndex = rowOffsets[rowIdx] ?? 0;
         const placeholders = Math.max(0, countPerPrompt - images.length);
         const showError = task.status === 'error' || !!task.error;
         const errorMessage = task.error || '生成失败';
 
         return (
-          <div key={task.id} className="aurora-batch-row">
+          <div key={task.id} className="aurora-batch-row" style={{ maxWidth: rowMaxWidth, margin: '0 auto' }}>
             <div className="aurora-batch-row-index" aria-label={`提示词 ${rowIdx + 1}`}>
               {rowIdx + 1}
             </div>
@@ -58,9 +63,6 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
               className="aurora-batch-row-grid"
               style={{
                 ['--batch-cols' as unknown as string]: columns,
-                width: '100%',
-                maxWidth: fullWidth ? '100%' : shrinkWidth,
-                marginRight: 'auto',
               } as React.CSSProperties}
             >
               {images.map((img, imgIdx) => {
@@ -111,6 +113,18 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
                     >
                       <Edit className="w-3.5 h-3.5" />
                     </button>
+                    {onIterate && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onIterate(img, baseIndex + imgIdx, orderedImages);
+                        }}
+                        aria-label="迭代此图片"
+                        className="h-7 w-7 rounded-[var(--radius-md)] border border-ash bg-graphite/90 text-text-secondary hover:text-banana-500 transition-colors flex items-center justify-center"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                     <a
                       href={img.base64}
                       download={`nano-banana-${img.id}.png`}

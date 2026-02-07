@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, ChevronRight, Sparkles, Image as ImageIcon, Wand2, FolderOpen, History } from 'lucide-react';
-import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig } from '../types';
+import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig, IterationContext, IterationMode } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
 import { useToast } from './Toast';
@@ -133,9 +133,38 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const [refImages, setRefImages] = useState<string[]>([]);
   const [customModel, setCustomModel] = useState('google/nano-banana');
 
+  // 迭代助手：图片上下文
+  const [iterationMode, setIterationMode] = useState<IterationMode>('prompt-only');
+  const [iterationContext, setIterationContext] = useState<IterationContext | undefined>();
+
+  const handleIterate = useCallback((image: GeneratedImage, index: number, allImages: GeneratedImage[]) => {
+    setIterationMode('image-context');
+    setIterationContext({
+      targetImage: image,
+      targetPrompt: image.prompt,
+      allImages,
+      selectedImageIndex: index,
+    });
+  }, []);
+
+  const handleClearIterationContext = useCallback(() => {
+    setIterationMode('prompt-only');
+    setIterationContext(undefined);
+  }, []);
+
+  const handleSwitchTarget = useCallback((image: GeneratedImage, index: number) => {
+    setIterationContext(prev => prev ? {
+      ...prev,
+      targetImage: image,
+      targetPrompt: image.prompt,
+      selectedImageIndex: index,
+    } : undefined);
+  }, []);
+
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
   const [showMobilePortfolio, setShowMobilePortfolio] = useState(false);
+  const portfolioTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Kie AI 预设模型列表（Kie AI 不支持 /v1/models 端点）
   // 参考: https://kie.ai/nano-banana, https://kie.ai/nano-banana-pro, https://kie.ai/google/imagen4
@@ -189,7 +218,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     model: ModelType.CUSTOM,
   });
 
-  // Results
   // Results: 本轮生成 + 历史记录（折叠）
   const [currentImages, setCurrentImages] = useState<GeneratedImage[]>([]);
   const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
@@ -215,6 +243,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     selectedBatchImageIds,
     isGenerating: isBatchGenerating,
     setBatchConfig,
+    setBatchTasks,
     setSelectedBatchImageIds,
     setIsBatchMode,
     startBatch,
@@ -229,6 +258,81 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     scope,
     activeProviderId
   });
+
+  // 迭代助手：生成回调（需要在 params、useBatchGenerator 之后声明）
+  const handleIterationGenerate = useCallback(async (optimizedPrompt: string, context: IterationContext) => {
+    if (generateLockRef.current || isGenerating) return;
+
+    const model = customModel.trim();
+    if (!model) { showToast('请先填写模型名', 'error'); return; }
+    if (!settings.baseUrl?.trim()) { showToast('请先填写 Base URL', 'error'); return; }
+    if (!settings.apiKey?.trim()) { showToast('请先填写 API Key', 'error'); return; }
+
+    setPrompt(optimizedPrompt);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const runId = ++generationRunIdRef.current;
+    generateLockRef.current = true;
+    setIsGenerating(true);
+
+    try {
+      const currentParams: GenerationParams = {
+        ...(context.targetImage?.params || params),
+        prompt: optimizedPrompt,
+        referenceImages: refImages,
+        model: model as ModelType,
+        count: 1,
+      };
+
+      const outcomes = await generateImages(currentParams, settings, { signal: controller.signal });
+
+      if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
+
+      const successImages = outcomes
+        .filter(o => o.ok === true)
+        .map(o => ({ ...(o as { ok: true; image: GeneratedImage }).image, sourceScope: scope, sourceProviderId: activeProviderId }));
+
+      if (successImages.length === 0) {
+        showToast('迭代生成失败', 'error');
+        return;
+      }
+
+      if (isBatchMode) {
+        const targetId = context.targetImage.id;
+        setBatchTasks(prev => {
+          const matched = prev.some(t => t.images?.some(img => img.id === targetId));
+          if (matched) {
+            return prev.map(t =>
+              t.images?.some(img => img.id === targetId)
+                ? { ...t, images: [...(t.images || []), ...successImages] }
+                : t
+            );
+          }
+          setCurrentImages(p => [...successImages, ...p]);
+          return prev;
+        });
+      } else {
+        setCurrentImages(prev => [...successImages, ...prev]);
+      }
+
+      for (const img of successImages) {
+        await saveImage(img);
+      }
+
+      showToast(`迭代生成完成（${successImages.length} 张新图）`, 'success');
+    } catch (error) {
+      if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
+      const aborted = (error as { name?: string })?.name === 'AbortError' || controller.signal.aborted;
+      if (aborted) { showToast('已停止生成', 'info'); return; }
+      showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
+    } finally {
+      if (generationRunIdRef.current === runId) generateLockRef.current = false;
+      if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
+      setIsGenerating(false);
+      abortControllerRef.current = null;
+    }
+  }, [params, refImages, customModel, settings, scope, activeProviderId, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks]);
 
   const batchPromptCount = useMemo(() => {
       const prompts = parsePromptsToBatch(prompt);
@@ -797,18 +901,36 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               </div>
             )}
             {isBatchMode ? (
-              <BatchImageGrid
-                tasks={batchTasks}
-                countPerPrompt={safePreviewCountPerPrompt}
-                selectedImageIds={selectedBatchImageIds}
-                onToggleSelect={(id) => {
-                  setSelectedBatchImageIds((prev) =>
-                    prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-                  );
-                }}
-                onImageClick={onImageClick}
-                onEdit={onEdit}
-              />
+              <>
+                <BatchImageGrid
+                  tasks={batchTasks}
+                  countPerPrompt={safePreviewCountPerPrompt}
+                  selectedImageIds={selectedBatchImageIds}
+                  onToggleSelect={(id) => {
+                    setSelectedBatchImageIds((prev) =>
+                      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+                    );
+                  }}
+                  onImageClick={onImageClick}
+                  onEdit={onEdit}
+                  onIterate={handleIterate}
+                />
+                {/* 批量模式下，迭代生成的新图单独展示 */}
+                {currentImages.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-xs text-text-muted mb-2 px-1">迭代生成 ({currentImages.length})</div>
+                    <ImageGrid
+                      images={currentImages}
+                      slots={generatedSlots}
+                      isGenerating={isGenerating}
+                      params={params}
+                      onImageClick={onImageClick}
+                      onEdit={onEdit}
+                      onIterate={handleIterate}
+                    />
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <ImageGrid
@@ -818,6 +940,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                   params={params}
                   onImageClick={onImageClick}
                   onEdit={onEdit}
+                  onIterate={handleIterate}
                 />
                 {historyImages.length > 0 && (
                   <>
@@ -837,6 +960,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                         params={params}
                         onImageClick={onImageClick}
                         onEdit={onEdit}
+                        onIterate={handleIterate}
                       />
                     )}
                   </>
@@ -853,6 +977,11 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             onUseVersion={setPrompt}
             iterateTemplateId={optimizerConfig?.iterateTemplateId}
             onTemplateChange={handleIterateTemplateChange}
+            iterationMode={iterationMode}
+            iterationContext={iterationContext}
+            onClearContext={handleClearIterationContext}
+            onGenerate={handleIterationGenerate}
+            onSwitchTarget={handleSwitchTarget}
           />
         </aside>
       </div>
@@ -940,7 +1069,21 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     添加参考图
                     <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
                   </label>
-                  <div className="relative flex-1">
+                  <div
+                    className="relative flex-1"
+                    onMouseEnter={() => {
+                      if (portfolioTimerRef.current) {
+                        clearTimeout(portfolioTimerRef.current);
+                        portfolioTimerRef.current = undefined;
+                      }
+                      setShowMobilePortfolio(true);
+                    }}
+                    onMouseLeave={() => {
+                      portfolioTimerRef.current = setTimeout(() => {
+                        setShowMobilePortfolio(false);
+                      }, 250);
+                    }}
+                  >
                     <button
                       type="button"
                       onClick={() => setShowMobilePortfolio((v) => !v)}
@@ -951,7 +1094,15 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     </button>
                     {showMobilePortfolio && (
                       <PortfolioPicker
-                        onPick={(base64) => addRefImages([base64])}
+                        selectedImages={refImages}
+                        onPick={(base64) => {
+                          const idx = refImages.indexOf(base64);
+                          if (idx >= 0) {
+                            removeRefImage(idx);
+                          } else {
+                            addRefImages([base64]);
+                          }
+                        }}
                         onClose={() => setShowMobilePortfolio(false)}
                       />
                     )}

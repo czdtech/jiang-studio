@@ -109,6 +109,21 @@ export interface IterationMessage {
   timestamp: number;
 }
 
+/** 迭代上下文：包含图片和提示词信息 */
+export interface IterationContext {
+  /** 目标图片（用于精准迭代） */
+  targetImage: GeneratedImage;
+  /** 目标图片的提示词 */
+  targetPrompt: string;
+  /** 当前所有图片列表（用于缩略图切换） */
+  allImages: GeneratedImage[];
+  /** 当前选中的图片索引 */
+  selectedImageIndex: number;
+}
+
+/** 迭代模式 */
+export type IterationMode = 'prompt-only' | 'image-context';
+
 /** 批量任务状态 */
 export type BatchTaskStatus = 'pending' | 'running' | 'success' | 'error';
 
@@ -125,7 +140,7 @@ export interface BatchTask {
 
 /** 批量生成配置 */
 export interface BatchConfig {
-  concurrency: number; // 并发数，默认 2
+  concurrency: number; // 并发数，默认 1
   countPerPrompt: number; // 每个提示词生成几张，默认 1
 }
 

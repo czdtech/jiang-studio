@@ -8,6 +8,8 @@ import {
   ProviderProfile,
   ProviderScope,
   PromptOptimizerConfig,
+  IterationContext,
+  IterationMode,
 } from '../types';
 import { generateImages } from '../services/openai';
 import { optimizeUserPrompt } from '../services/mcp';
@@ -219,9 +221,38 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     };
   }, []);
 
+  // 迭代助手：图片上下文
+  const [iterationMode, setIterationMode] = useState<IterationMode>('prompt-only');
+  const [iterationContext, setIterationContext] = useState<IterationContext | undefined>();
+
+  const handleIterate = useCallback((image: GeneratedImage, index: number, allImages: GeneratedImage[]) => {
+    setIterationMode('image-context');
+    setIterationContext({
+      targetImage: image,
+      targetPrompt: image.prompt,
+      allImages,
+      selectedImageIndex: index,
+    });
+  }, []);
+
+  const handleClearIterationContext = useCallback(() => {
+    setIterationMode('prompt-only');
+    setIterationContext(undefined);
+  }, []);
+
+  const handleSwitchTarget = useCallback((image: GeneratedImage, index: number) => {
+    setIterationContext(prev => prev ? {
+      ...prev,
+      targetImage: image,
+      targetPrompt: image.prompt,
+      selectedImageIndex: index,
+    } : undefined);
+  }, []);
+
   // 参考图弹出层
   const [showRefPopover, setShowRefPopover] = useState(false);
   const [showMobilePortfolio, setShowMobilePortfolio] = useState(false);
+  const portfolioTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
@@ -285,6 +316,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       selectedBatchImageIds,
       isGenerating: isBatchGenerating,
       setBatchConfig,
+      setBatchTasks,
       setSelectedBatchImageIds,
       setIsBatchMode,
       startBatch,
@@ -299,6 +331,87 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
       scope,
       activeProviderId
   });
+
+  const handleIterationGenerate = useCallback(async (optimizedPrompt: string, context: IterationContext) => {
+    if (generateLockRef.current || isGenerating) return;
+
+    const model = customModel.trim();
+    if (!model) { showToast('请先填写模型名', 'error'); return; }
+    if (!baseUrl?.trim()) { showToast('请先填写 Base URL', 'error'); return; }
+    if (requiresApiKey && !apiKey?.trim()) { showToast('请先填写 API Key', 'error'); return; }
+
+    setPrompt(optimizedPrompt);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const runId = ++generationRunIdRef.current;
+    generateLockRef.current = true;
+    setIsGenerating(true);
+
+    try {
+      const currentParams: GenerationParams = {
+        ...(context.targetImage?.params || params),
+        prompt: optimizedPrompt,
+        referenceImages: refImages,
+        model: model as ModelType,
+        count: 1,
+      };
+
+      const antigravityConfig = isAntigravityTools ? inferAntigravityImageConfigFromModelId(model) : null;
+      if (antigravityConfig?.aspectRatio) currentParams.aspectRatio = antigravityConfig.aspectRatio;
+      if (antigravityConfig?.imageSize) currentParams.imageSize = antigravityConfig.imageSize;
+
+      const outcomes = await generateImages(currentParams, settings, {
+        signal: controller.signal,
+        imageConfig: isAntigravityTools ? {} : undefined,
+      });
+
+      if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
+
+      const successImages = outcomes
+        .filter(o => o.ok === true)
+        .map(o => ({ ...(o as { ok: true; image: GeneratedImage }).image, sourceScope: scope, sourceProviderId: activeProviderId }));
+
+      if (successImages.length === 0) {
+        showToast('迭代生成失败', 'error');
+        return;
+      }
+
+      if (isBatchMode) {
+        const targetId = context.targetImage.id;
+        setBatchTasks(prev => {
+          const matched = prev.some(t => t.images?.some(img => img.id === targetId));
+          if (matched) {
+            return prev.map(t =>
+              t.images?.some(img => img.id === targetId)
+                ? { ...t, images: [...(t.images || []), ...successImages] }
+                : t
+            );
+          }
+          setCurrentImages(p => [...successImages, ...p]);
+          return prev;
+        });
+      } else {
+        setCurrentImages(prev => [...successImages, ...prev]);
+      }
+
+      for (const img of successImages) {
+        await saveImage(img);
+      }
+
+      showToast(`迭代生成完成（${successImages.length} 张新图）`, 'success');
+    } catch (error) {
+      if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
+      const aborted = (error as { name?: string })?.name === 'AbortError' || controller.signal.aborted;
+      if (aborted) { showToast('已停止生成', 'info'); return; }
+      showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
+    } finally {
+      if (generationRunIdRef.current === runId) generateLockRef.current = false;
+      if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
+      setIsGenerating(false);
+      abortControllerRef.current = null;
+    }
+  }, [params, refImages, customModel, apiKey, baseUrl, settings, scope, activeProviderId, isAntigravityTools, requiresApiKey, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks]);
 
   const batchPromptCount = useMemo(() => {
       const prompts = parsePromptsToBatch(prompt);
@@ -869,18 +982,36 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
               </div>
             )}
             {isBatchMode ? (
-              <BatchImageGrid
-                tasks={batchTasks}
-                countPerPrompt={safePreviewCountPerPrompt}
-                selectedImageIds={selectedBatchImageIds}
-                onToggleSelect={(id) => {
-                  setSelectedBatchImageIds((prev) =>
-                    prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-                  );
-                }}
-                onImageClick={onImageClick}
-                onEdit={onEdit}
-              />
+              <>
+                <BatchImageGrid
+                  tasks={batchTasks}
+                  countPerPrompt={safePreviewCountPerPrompt}
+                  selectedImageIds={selectedBatchImageIds}
+                  onToggleSelect={(id) => {
+                    setSelectedBatchImageIds((prev) =>
+                      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+                    );
+                  }}
+                  onImageClick={onImageClick}
+                  onEdit={onEdit}
+                  onIterate={handleIterate}
+                />
+                {/* 批量模式下，迭代生成的新图单独展示 */}
+                {currentImages.length > 0 && (
+                  <div className="mt-4">
+                    <div className="text-xs text-text-muted mb-2 px-1">迭代生成 ({currentImages.length})</div>
+                    <ImageGrid
+                      images={currentImages}
+                      slots={generatedSlots}
+                      isGenerating={isGenerating}
+                      params={params}
+                      onImageClick={onImageClick}
+                      onEdit={onEdit}
+                      onIterate={handleIterate}
+                    />
+                  </div>
+                )}
+              </>
             ) : (
               <>
                 <ImageGrid
@@ -890,6 +1021,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                   params={params}
                   onImageClick={onImageClick}
                   onEdit={onEdit}
+                  onIterate={handleIterate}
                 />
                 {historyImages.length > 0 && (
                   <>
@@ -909,6 +1041,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                         params={params}
                         onImageClick={onImageClick}
                         onEdit={onEdit}
+                        onIterate={handleIterate}
                       />
                     )}
                   </>
@@ -925,6 +1058,11 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
             onUseVersion={setPrompt}
             iterateTemplateId={optimizerConfig?.iterateTemplateId}
             onTemplateChange={handleIterateTemplateChange}
+            iterationMode={iterationMode}
+            iterationContext={iterationContext}
+            onClearContext={handleClearIterationContext}
+            onGenerate={handleIterationGenerate}
+            onSwitchTarget={handleSwitchTarget}
           />
         </aside>
       </div>
@@ -1012,7 +1150,21 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                     添加参考图
                     <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
                   </label>
-                  <div className="relative flex-1">
+                  <div
+                    className="relative flex-1"
+                    onMouseEnter={() => {
+                      if (portfolioTimerRef.current) {
+                        clearTimeout(portfolioTimerRef.current);
+                        portfolioTimerRef.current = undefined;
+                      }
+                      setShowMobilePortfolio(true);
+                    }}
+                    onMouseLeave={() => {
+                      portfolioTimerRef.current = setTimeout(() => {
+                        setShowMobilePortfolio(false);
+                      }, 250);
+                    }}
+                  >
                     <button
                       type="button"
                       onClick={() => setShowMobilePortfolio((v) => !v)}
@@ -1023,7 +1175,15 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                     </button>
                     {showMobilePortfolio && (
                       <PortfolioPicker
-                        onPick={(base64) => addRefImages([base64])}
+                        selectedImages={refImages}
+                        onPick={(base64) => {
+                          const idx = refImages.indexOf(base64);
+                          if (idx >= 0) {
+                            removeRefImage(idx);
+                          } else {
+                            addRefImages([base64]);
+                          }
+                        }}
                         onClose={() => setShowMobilePortfolio(false)}
                       />
                     )}
