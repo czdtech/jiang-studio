@@ -18,6 +18,7 @@ import {
   ImageConfig,
   InternalGeneratedImage,
 } from './shared';
+import { debugLog } from './logger';
 
 const MAX_CONCURRENCY = 2;
 const REQUEST_TIMEOUT_MS = 60000;
@@ -153,6 +154,13 @@ const isEndpointUnsupported = (error: unknown): boolean => {
   return /API error (404|405|501)/i.test(msg) || /not\s+found|not\s+supported/i.test(msg);
 };
 
+const isUnknownAspectRatioError = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  if (!/API error (400|422)/i.test(msg)) return false;
+  if (!/aspect_ratio/i.test(msg)) return false;
+  return /unknown|unrecognized|unexpected|additional\s+properties|extra|invalid|not\s+allowed|not\s+permitted/i.test(msg);
+};
+
 const isGeminiModel = (model: string): boolean => model.toLowerCase().startsWith('gemini-');
 
 const buildGeminiContents = (params: GenerationParams): Array<{ role?: string; parts: Array<Record<string, unknown>> }> => {
@@ -229,8 +237,8 @@ const callStreamingAPI = async (
     if (imageConfig.imageSize) body.size = imageConfig.imageSize;
   }
 
-  console.log('Request URL:', url);
-  console.log('Request body:', JSON.stringify(body, null, 2));
+  debugLog('Request URL:', url);
+  debugLog('Request body:', JSON.stringify(body, null, 2));
 
   throwIfAborted(signal);
   const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
@@ -289,9 +297,12 @@ const callImagesAPI = async (
   if (imageConfig?.imageSize) {
     body.size = imageConfig.imageSize;
   }
+  if (imageConfig?.aspectRatio) {
+    body.aspect_ratio = imageConfig.aspectRatio;
+  }
 
-  console.log('Images API URL:', url);
-  console.log('Images API body:', JSON.stringify(body, null, 2));
+  debugLog('Images API URL:', url);
+  debugLog('Images API body:', JSON.stringify(body, null, 2));
 
   throwIfAborted(signal);
   const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
@@ -338,8 +349,8 @@ const callGeminiRelayAPI = async (
     },
   };
 
-  console.log('Gemini Relay URL:', url);
-  console.log('Gemini Relay body:', JSON.stringify(body, null, 2));
+  debugLog('Gemini Relay URL:', url);
+  debugLog('Gemini Relay body:', JSON.stringify(body, null, 2));
 
   throwIfAborted(signal);
   const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
@@ -372,7 +383,7 @@ const callGeminiRelayAPI = async (
   const image = extractGeminiImageFromResponse(result, params);
   if (image) return image;
 
-  console.log('Gemini Relay Response:', JSON.stringify(result, null, 2));
+  debugLog('Gemini Relay Response:', JSON.stringify(result, null, 2));
   throw new Error('No image in Gemini relay response. Check browser console.');
 };
 
@@ -388,22 +399,31 @@ const callGeminiChatRelayAPI = async (
   // messages 使用标准 OpenAI 格式（包含 image_url），确保代理能正确接收参考图
   // contents 使用 Gemini 原生格式，供支持 Gemini 协议的代理使用
   const messageContent = buildMessageContent(params);
+  // 映射 imageSize 为 OpenAI 兼容的像素尺寸（如 1K + 3:4 → 1024x1536）
+  const mappedSize = imageConfig.imageSize
+    ? mapOpenAIImageSize(imageConfig.imageSize, imageConfig.aspectRatio)
+    : undefined;
+  const generationConfig = {
+    responseModalities: ['IMAGE'],
+    imageConfig,
+  };
   const body: Record<string, unknown> = {
     model: params.model,
     stream: true,
     max_tokens: 8192,
     messages: [{ role: 'user', content: messageContent }],
     contents,
-    extra_body: {
-      generationConfig: {
-        responseModalities: ['IMAGE'],
-        imageConfig,
-      },
-    },
+    // 顶层 generationConfig：大多数 Gemini 中转会读取此字段
+    generationConfig,
+    // 顶层 OpenAI 风格字段：部分中转通过 aspect_ratio / size 传递参数
+    ...(imageConfig.aspectRatio && { aspect_ratio: imageConfig.aspectRatio }),
+    ...(mappedSize && { size: mappedSize }),
+    // extra_body：兼容使用 OpenAI Python SDK 的中转
+    extra_body: { generationConfig },
   };
 
-  console.log('Gemini Chat Relay URL:', url);
-  console.log('Gemini Chat Relay body:', JSON.stringify(body, null, 2));
+  debugLog('Gemini Chat Relay URL:', url);
+  debugLog('Gemini Chat Relay body:', JSON.stringify(body, null, 2));
 
   throwIfAborted(signal);
   const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
@@ -579,7 +599,7 @@ const parseStreamResponse = async (response: Response, signal?: AbortSignal): Pr
 
   if (streamError) throw new Error(`API stream error: ${streamError}`);
 
-  console.log('Stream completed. Image found:', !!imageData);
+  debugLog('Stream completed. Image found:', !!imageData);
 
   return {
     choices: [
@@ -603,12 +623,29 @@ const requestImageResponse = async (
   imageConfig?: ImageConfig,
   signal?: AbortSignal
 ): Promise<OpenAIResponse> => {
+  const removeAspectRatio = (cfg?: ImageConfig): ImageConfig | undefined => {
+    if (!cfg?.aspectRatio) return cfg;
+    const { aspectRatio: _omit, ...rest } = cfg;
+    return Object.keys(rest).length > 0 ? rest : undefined;
+  };
+
   const requestOnce = (cfg?: ImageConfig, omitResponseFormat?: boolean) =>
     callStreamingAPI(baseUrl, apiKey, model, messages, cfg, signal, { omitResponseFormat });
 
-  const requestWithSizeFallback = async (cfg?: ImageConfig, omitResponseFormat?: boolean) => {
+  const requestOnceWithAspectFallback = async (cfg?: ImageConfig, omitResponseFormat?: boolean) => {
     try {
       return await requestOnce(cfg, omitResponseFormat);
+    } catch (error) {
+      if (cfg?.aspectRatio && isUnknownAspectRatioError(error)) {
+        return await requestOnce(removeAspectRatio(cfg), omitResponseFormat);
+      }
+      throw error;
+    }
+  };
+
+  const requestWithSizeFallback = async (cfg?: ImageConfig, omitResponseFormat?: boolean) => {
+    try {
+      return await requestOnceWithAspectFallback(cfg, omitResponseFormat);
     } catch (error) {
       if (!cfg?.imageSize || !isInvalidSizeError(error)) {
         throw error;
@@ -617,18 +654,18 @@ const requestImageResponse = async (
       const mappedSize = mapOpenAIImageSize(cfg.imageSize, cfg.aspectRatio);
       if (mappedSize && mappedSize !== cfg.imageSize) {
         try {
-          return await requestOnce({ ...cfg, imageSize: mappedSize }, omitResponseFormat);
+          return await requestOnceWithAspectFallback({ ...cfg, imageSize: mappedSize }, omitResponseFormat);
         } catch (retryError) {
           if (!isInvalidSizeError(retryError)) throw retryError;
           const { imageSize: _omit, ...rest } = cfg;
           const fallback = Object.keys(rest).length > 0 ? rest : undefined;
-          return await requestOnce(fallback, omitResponseFormat);
+          return await requestOnceWithAspectFallback(fallback, omitResponseFormat);
         }
       }
 
       const { imageSize: _omit, ...rest } = cfg;
       const fallback = Object.keys(rest).length > 0 ? rest : undefined;
-      return await requestOnce(fallback, omitResponseFormat);
+      return await requestOnceWithAspectFallback(fallback, omitResponseFormat);
     }
   };
 
@@ -660,7 +697,14 @@ const requestImageResponse = async (
         ? mapOpenAIImageSize(nextCfg.imageSize, nextCfg.aspectRatio) ?? nextCfg.imageSize
         : undefined;
       const finalCfg = imageSize ? { ...nextCfg, imageSize } : nextCfg;
-      return await callImagesAPI(baseUrl, apiKey, model, promptText, finalCfg, signal);
+      try {
+        return await callImagesAPI(baseUrl, apiKey, model, promptText, finalCfg, signal);
+      } catch (error) {
+        if (finalCfg?.aspectRatio && isUnknownAspectRatioError(error)) {
+          return await callImagesAPI(baseUrl, apiKey, model, promptText, removeAspectRatio(finalCfg), signal);
+        }
+        throw error;
+      }
     };
 
     try {
@@ -802,7 +846,7 @@ const extractImageFromResponse = (
 /** 处理可能是 URL 的图像 */
 const finalizeImage = async (image: InternalGeneratedImage, signal?: AbortSignal): Promise<GeneratedImage> => {
   if (image._isUrl || (!image.base64.startsWith('data:') && image.base64.startsWith('http'))) {
-    console.log('Converting image URL to base64:', image.base64);
+    debugLog('Converting image URL to base64:', image.base64);
     image.base64 = await urlToBase64(image.base64, signal);
     delete image._isUrl;
   }
@@ -817,10 +861,14 @@ const generateSingle = async (
   imageConfigOverride?: ImageConfig
 ): Promise<GeneratedImage> => {
   if (isGeminiModel(params.model)) {
-    const shouldUseNativeRelay =
-      settings.baseUrl.includes('generativelanguage.googleapis.com') || settings.baseUrl.includes('/v1beta');
-    if (shouldUseNativeRelay) {
+    // 优先尝试 Gemini 原生端点（/v1beta/models/:generateContent）
+    // 原生端点对 aspectRatio / imageSize 支持最可靠
+    try {
       return await callGeminiRelayAPI(params, settings, signal);
+    } catch (error) {
+      // 仅当端点不支持（404/405/501）时才降级到 /v1/chat/completions
+      if (!isEndpointUnsupported(error)) throw error;
+      debugLog('Gemini native relay endpoint not supported, falling back to /v1/chat/completions');
     }
     return await requestGeminiChatImage(params, settings, signal);
   }
@@ -850,7 +898,7 @@ const generateSingle = async (
   const contentLen = typeof responseContent === 'string' ? responseContent.length : undefined;
   const imageLen = result._imageData?.length;
   if ((contentLen && contentLen > 20000) || (imageLen && imageLen > 20000)) {
-    console.log('API Response:', {
+    debugLog('API Response:', {
       finish_reason: result.choices?.[0]?.finish_reason,
       has_image: !!result._imageData,
       image_len: imageLen,
@@ -860,13 +908,13 @@ const generateSingle = async (
         typeof responseContent === 'string' ? responseContent.slice(0, 60) : undefined,
     });
   } else {
-    console.log('API Response:', JSON.stringify(result, null, 2));
+    debugLog('API Response:', JSON.stringify(result, null, 2));
   }
 
   const image = extractImageFromResponse(result, params);
   if (image) {
     if (image._isUrl || (!image.base64.startsWith('data:') && image.base64.startsWith('http'))) {
-      console.log('Converting image URL to base64:', image.base64);
+      debugLog('Converting image URL to base64:', image.base64);
       image.base64 = await urlToBase64(image.base64, signal);
       delete image._isUrl;
       return image;
@@ -963,7 +1011,7 @@ export const editImage = async (
   // 压缩过大的图像
   let imageToSend = sourceImage;
   if (sourceImage.length > 1000000) {
-    console.log('Image too large, compressing...');
+    debugLog('Image too large, compressing...');
     imageToSend = await compressImage(sourceImage, 600);
   }
 
@@ -988,7 +1036,7 @@ export const editImage = async (
     return cfg;
   })();
 
-  console.log('Edit request - Model:', model, 'Instruction:', instruction);
+  debugLog('Edit request - Model:', model, 'Instruction:', instruction);
 
   const result = await requestImageResponse(
     settings.baseUrl,

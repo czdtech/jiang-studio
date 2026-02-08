@@ -2,6 +2,7 @@
  * 共享工具函数和类型定义
  */
 import { GenerationParams, GeneratedImage } from '../types';
+import { debugLog } from './logger';
 
 // ============ 类型定义 ============
 
@@ -227,7 +228,7 @@ export const compressImage = async (
 
       // 最终使用 low 值（保证在限制内）
       result = toDataURL(low);
-      console.log(
+      debugLog(
         `Image compressed: ${Math.round(base64.length / 1024)}KB -> ${Math.round(result.length / 1024)}KB (quality: ${low.toFixed(2)})`
       );
       resolve(result);

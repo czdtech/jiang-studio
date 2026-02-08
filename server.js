@@ -7,6 +7,51 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.disable('x-powered-by');
+
+// Basic security headers (keep connect/img permissive for multi-provider client-side calls)
+app.use((req, res, next) => {
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader(
+    'Permissions-Policy',
+    [
+      'camera=()',
+      'microphone=()',
+      'geolocation=()',
+      'payment=()',
+      'usb=()',
+      'serial=()',
+      'bluetooth=()',
+    ].join(', ')
+  );
+
+  // CSP: disallow inline scripts; keep connect/img broad for user-configured providers.
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "base-uri 'none'",
+      "object-src 'none'",
+      "frame-ancestors 'none'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "connect-src 'self' https: http:",
+      "font-src 'self' data:",
+      "form-action 'self'",
+    ].join('; ')
+  );
+
+  const proto = req.headers['x-forwarded-proto'];
+  if (proto === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  next();
+});
+
 // prompt-optimizer 内网地址（Railway Private Networking）
 const mcpTarget = process.env.PROMPT_OPTIMIZER_TARGET
   || 'http://prompt-optimizer.railway.internal:80';

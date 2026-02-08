@@ -275,6 +275,29 @@ export const IterationAssistant = ({
     void sendMessage(text);
   };
 
+  const inputElement = (
+    <div className="aurora-chat-input">
+      <textarea
+        ref={textareaRef}
+        rows={1}
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder={isDisabled ? '请先在左侧输入提示词' : '描述修改需求...'}
+        disabled={isDisabled}
+        className="aurora-chat-input-textarea"
+      />
+      <button
+        type="button"
+        onClick={() => void sendMessage(input)}
+        disabled={!canSend}
+        className="aurora-chat-input-send"
+      >
+        <Send className="w-4 h-4" />
+      </button>
+    </div>
+  );
+
   return (
     <div
       ref={containerRef}
@@ -437,6 +460,9 @@ export const IterationAssistant = ({
                 ))}
               </div>
             )}
+            <div className="aurora-assistant-inline-input">
+              {inputElement}
+            </div>
           </div>
         ) : (
           /* 消息列表 */
@@ -483,33 +509,13 @@ export const IterationAssistant = ({
               </div>
             )}
 
+            <div className="aurora-assistant-inline-input">
+              {inputElement}
+            </div>
+
             <div ref={messagesEndRef} />
           </div>
         )}
-      </div>
-
-      {/* 输入区域 */}
-      <div className="aurora-assistant-footer">
-        <div className="aurora-chat-input">
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={isDisabled ? '请先在左侧输入提示词' : '描述修改需求...'}
-            disabled={isDisabled}
-            className="aurora-chat-input-textarea"
-          />
-          <button
-            type="button"
-            onClick={() => void sendMessage(input)}
-            disabled={!canSend}
-            className="aurora-chat-input-send"
-          >
-            <Send className="w-4 h-4" />
-          </button>
-        </div>
       </div>
     </div>
   );

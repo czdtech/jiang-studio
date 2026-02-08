@@ -999,6 +999,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                 className="aurora-prompt-box-textarea"
               />
             </div>
+            {!settingsApiKey.trim() && (
+              <p className="mt-2 text-xs text-warning/80">
+                未填写 API Key，无法生成。
+              </p>
+            )}
             {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
 
             {/* 配置栏 + 生成按钮 */}

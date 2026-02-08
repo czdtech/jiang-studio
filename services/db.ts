@@ -30,6 +30,20 @@ export const openDB = (): Promise<IDBDatabase> => {
   });
 };
 
+export const clearAllLocalData = async (): Promise<void> => {
+  const db = await openDB();
+  const stores = [IMAGE_STORE, PROVIDER_STORE, DRAFT_STORE, SETTINGS_STORE];
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(stores, 'readwrite');
+    for (const name of stores) {
+      tx.objectStore(name).clear();
+    }
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+};
+
 // ============ Settings ============
 
 type SettingRecord = { key: string; value: unknown };

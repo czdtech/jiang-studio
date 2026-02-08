@@ -14,6 +14,7 @@ import {
   createAbortError,
   throwIfAborted,
 } from './shared';
+import { debugLog } from './logger';
 
 const MAX_CONCURRENCY = 2;
 
@@ -120,7 +121,7 @@ const generateSingle = async (
   const image = extractImageFromResponse(response as GeminiResponse, params);
   if (image) return image;
 
-  console.log('Gemini Response:', JSON.stringify(response, null, 2));
+  debugLog('Gemini Response:', JSON.stringify(response, null, 2));
   throw new Error('No image in Gemini response. Check browser console.');
 };
 

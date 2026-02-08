@@ -1061,11 +1061,23 @@ a:focus-visible,
   }
 }
 
-/* Footer / Input */
-.aurora-assistant-footer {
-  padding: 12px 14px;
-  border-top: 1px solid var(--color-ash);
-  flex-shrink: 0;
+/* Inline floating input */
+.aurora-assistant-inline-input {
+  padding: 4px 0;
+}
+
+.aurora-assistant-inline-input .aurora-chat-input {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(247, 179, 43, 0.06);
+}
+
+.aurora-assistant-empty .aurora-assistant-inline-input {
+  width: 100%;
+  padding: 0 2px;
+  margin-top: 8px;
+}
+
+.aurora-assistant-messages-inner .aurora-assistant-inline-input {
+  padding: 4px 0 0;
 }
 
 /* Chat input (reusable) */

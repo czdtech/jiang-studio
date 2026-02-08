@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test';
 test('基础导航与页面渲染', async ({ page }) => {
   await page.goto('/');
 
+  const topNav = page.getByRole('banner').getByRole('navigation');
   const tabs = [
     { nav: 'Gemini 官方', heading: 'Gemini 设置' },
     { nav: '第三方中转', heading: 'OpenAI Compatible' },
@@ -12,7 +13,7 @@ test('基础导航与页面渲染', async ({ page }) => {
   ] as const;
 
   for (const t of tabs) {
-    await page.getByRole('button', { name: t.nav, exact: true }).click({ force: true });
+    await topNav.getByRole('button', { name: t.nav, exact: true }).click({ force: true });
     await expect(page.getByRole('main').getByText(t.heading, { exact: true })).toBeVisible();
   }
 });

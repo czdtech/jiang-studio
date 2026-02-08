@@ -3,6 +3,7 @@ import { History, Edit, Trash2, FolderOpen, X as XIcon, ShieldAlert, ChevronDown
 import { GeneratedImage } from '../types';
 import {
   clearGalleryDirectoryHandle,
+  clearAllLocalData,
   getGalleryDirectoryHandle,
   setGalleryDirectoryHandle,
 } from '../services/db';
@@ -26,6 +27,7 @@ export const PortfolioGrid = ({
   const [gallerySupported, setGallerySupported] = useState<boolean>(false);
   const [galleryPermission, setGalleryPermission] = useState<PermissionState | 'unknown'>('unknown');
   const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [isClearing, setIsClearing] = useState(false);
   const [sortOrder, setSortOrder] = useState<'newest' | 'oldest'>('newest');
   const [displayCount, setDisplayCount] = useState(20);
 
@@ -104,6 +106,21 @@ export const PortfolioGrid = ({
     setGalleryPermission('unknown');
   };
 
+  const handleClearAllLocalData = async () => {
+    if (isClearing) return;
+    if (!confirm('确认清空本地数据？这会删除浏览器里保存的 API Key、供应商配置、草稿、作品集图片等。')) return;
+    if (!confirm('最后确认：清空后无法恢复，且需要刷新页面才能生效。继续吗？')) return;
+    setIsClearing(true);
+    try {
+      await clearAllLocalData();
+      showToast('已清空本地数据，即将刷新页面', 'success');
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (e) {
+      showToast('清空失败：' + (e instanceof Error ? e.message : 'Unknown'), 'error');
+      setIsClearing(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4">
@@ -115,6 +132,15 @@ export const PortfolioGrid = ({
         </div>
 
         <div className="flex items-center gap-3">
+          <button
+            onClick={handleClearAllLocalData}
+            disabled={isClearing}
+            className="px-3 py-2 rounded-lg border text-sm font-medium transition-colors bg-dark-surface border-dark-border text-gray-300 hover:border-red-500/60 hover:text-white disabled:opacity-60"
+            title="清空浏览器本地保存的数据（API Key/供应商/作品集等）"
+          >
+            {isClearing ? '清空中…' : '清空本地数据'}
+          </button>
+
           {/* 排序下拉 */}
           <div className="relative">
             <select
@@ -171,20 +197,20 @@ export const PortfolioGrid = ({
         </div>
       </div>
 
-	      {galleryDirName ? (
-	        galleryPermission !== 'granted' ? (
-	          <p className="text-xs text-gray-500">
-	            已选择目录，但当前未授予写入权限（浏览器重启/刷新后常见）；点击右上角“重新授权”后才会自动落盘，否则会回退到 IndexedDB。
-	          </p>
-	        ) : (
-	          <p className="text-xs text-gray-500">
-	            已启用“落盘存储”：新生成图片会优先保存原图到该目录，IndexedDB 仅保存缩略图与文件句柄（更省配额）。
-	          </p>
-	        )
-	      ) : gallerySupported ? (
-	        <p className="text-xs text-gray-500">
-	          建议选择一个目录用于保存原图到磁盘；未选择时将回退保存到 IndexedDB（会占用浏览器配额）。
-	        </p>
+      {galleryDirName ? (
+        galleryPermission !== 'granted' ? (
+          <p className="text-xs text-gray-500">
+            已选择目录，但当前未授予写入权限（浏览器重启/刷新后常见）；点击右上角“重新授权”后才会自动落盘，否则会回退到 IndexedDB。
+          </p>
+        ) : (
+          <p className="text-xs text-gray-500">
+            已启用“落盘存储”：新生成图片会优先保存原图到该目录，IndexedDB 仅保存缩略图与文件句柄（更省配额）。
+          </p>
+        )
+      ) : gallerySupported ? (
+        <p className="text-xs text-gray-500">
+          建议选择一个目录用于保存原图到磁盘；未选择时将回退保存到 IndexedDB（会占用浏览器配额）。
+        </p>
       ) : (
         <p className="text-xs text-gray-500">
           目录选择需要 Chrome/Edge 且在安全上下文（localhost 或 https）下打开；通过局域网 HTTP 访问时通常不可用。

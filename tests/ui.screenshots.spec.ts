@@ -18,6 +18,7 @@ test.describe('UI 截图回归', () => {
     await expect(page.getByRole('main').getByText('Gemini 设置', { exact: true })).toBeVisible();
     await expect(page).toHaveScreenshot('desktop-gemini.png', shotOptions);
 
+    const topNav = page.getByRole('banner').getByRole('navigation');
     const steps = [
       { nav: '第三方中转', waitFor: 'OpenAI Compatible', shot: 'desktop-openai_proxy.png' },
       { nav: 'Antigravity', waitFor: 'Antigravity Tools', shot: 'desktop-antigravity.png' },
@@ -26,7 +27,7 @@ test.describe('UI 截图回归', () => {
     ] as const;
 
     for (const s of steps) {
-      await page.getByRole('button', { name: s.nav, exact: true }).click({ force: true });
+      await topNav.getByRole('button', { name: s.nav, exact: true }).click({ force: true });
       await expect(page.getByRole('main').getByText(s.waitFor, { exact: true })).toBeVisible();
       await expect(page).toHaveScreenshot(s.shot, shotOptions);
     }
@@ -38,6 +39,7 @@ test.describe('UI 截图回归', () => {
     await expect(page.getByRole('main').getByText('Gemini 设置', { exact: true })).toBeVisible();
     await expect(page).toHaveScreenshot('mobile-gemini.png', shotOptions);
 
+    const bottomNav = page.locator('nav.aurora-mobile-nav');
     const steps = [
       { nav: '中转', waitFor: 'OpenAI Compatible', shot: 'mobile-openai_proxy.png' },
       { nav: 'AG', waitFor: 'Antigravity Tools', shot: 'mobile-antigravity.png' },
@@ -46,7 +48,7 @@ test.describe('UI 截图回归', () => {
     ] as const;
 
     for (const s of steps) {
-      await page.getByRole('button', { name: s.nav, exact: true }).click({ force: true });
+      await bottomNav.getByRole('button', { name: s.nav, exact: true }).click({ force: true });
       await expect(page.getByRole('main').getByText(s.waitFor, { exact: true })).toBeVisible();
       await expect(page).toHaveScreenshot(s.shot, shotOptions);
     }
