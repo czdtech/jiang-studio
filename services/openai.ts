@@ -116,6 +116,16 @@ const parseAspectRatioValue = (ratio?: string): number | null => {
   return parts[0] / parts[1];
 };
 
+/** 比例 × 分辨率 → 精确像素尺寸（兼容 Antigravity / OpenAI 兼容中转的 size 参数） */
+const RATIO_SIZE_MAP: Record<string, Record<string, string>> = {
+  '1:1':  { '1K': '1024x1024', '2K': '2048x2048', '4K': '4096x4096' },
+  '16:9': { '1K': '1280x720',  '2K': '2560x1440', '4K': '3840x2160' },
+  '9:16': { '1K': '720x1280',  '2K': '1440x2560', '4K': '2160x3840' },
+  '4:3':  { '1K': '1216x896',  '2K': '2432x1792', '4K': '4096x3072' },
+  '3:4':  { '1K': '896x1216',  '2K': '1792x2432', '4K': '3072x4096' },
+  '21:9': { '1K': '1344x576',  '2K': '2688x1152', '4K': '4032x1728' },
+};
+
 const mapOpenAIImageSize = (imageSize?: string, aspectRatio?: string): string | undefined => {
   if (!imageSize) return undefined;
   if (/^\d+x\d+$/i.test(imageSize)) return imageSize;
@@ -123,6 +133,12 @@ const mapOpenAIImageSize = (imageSize?: string, aspectRatio?: string): string | 
   const normalized = imageSize.toUpperCase();
   if (!['1K', '2K', '4K'].includes(normalized)) return imageSize;
 
+  // 优先查精确映射表
+  if (aspectRatio && RATIO_SIZE_MAP[aspectRatio]?.[normalized]) {
+    return RATIO_SIZE_MAP[aspectRatio][normalized];
+  }
+
+  // 回退：按方向粗略估算
   const ratio = parseAspectRatioValue(aspectRatio);
   const isLandscape = ratio !== null && ratio > 1.05;
   const isPortrait = ratio !== null && ratio < 0.95;
@@ -403,6 +419,9 @@ const callGeminiChatRelayAPI = async (
   const mappedSize = imageConfig.imageSize
     ? mapOpenAIImageSize(imageConfig.imageSize, imageConfig.aspectRatio)
     : undefined;
+  // 映射 imageSize 为 Antigravity quality 参数（standard=1K, medium=2K, hd=4K）
+  const QUALITY_MAP: Record<string, string> = { '1K': 'standard', '2K': 'medium', '4K': 'hd' };
+  const mappedQuality = imageConfig.imageSize ? QUALITY_MAP[imageConfig.imageSize.toUpperCase()] : undefined;
   const generationConfig = {
     responseModalities: ['IMAGE'],
     imageConfig,
@@ -415,9 +434,10 @@ const callGeminiChatRelayAPI = async (
     contents,
     // 顶层 generationConfig：大多数 Gemini 中转会读取此字段
     generationConfig,
-    // 顶层 OpenAI 风格字段：部分中转通过 aspect_ratio / size 传递参数
+    // 顶层 OpenAI 风格字段：部分中转通过 aspect_ratio / size / quality 传递参数
     ...(imageConfig.aspectRatio && { aspect_ratio: imageConfig.aspectRatio }),
     ...(mappedSize && { size: mappedSize }),
+    ...(mappedQuality && { quality: mappedQuality }),
     // extra_body：兼容使用 OpenAI Python SDK 的中转
     extra_body: { generationConfig },
   };

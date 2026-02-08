@@ -463,11 +463,13 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     }
 
     try {
+      // 使用 UI 可见的 "每词" 数量，而非 params.count（可能来自旧草稿残留值）
       const currentParams: GenerationParams = {
         ...params,
         prompt: finalPrompt,
         referenceImages: refImages,
         model: normalizeGeminiModel(params.model),
+        count: safePreviewCountPerPrompt,
       };
 
       const outcomes = await generateImages(
