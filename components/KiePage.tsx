@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Plug, RefreshCw, Plus, X, Star, Trash2, ChevronDown, ChevronRight, Sparkles, Image as ImageIcon, Wand2, FolderOpen, History } from 'lucide-react';
+import { Settings, RefreshCw, Plus, X, Star, Trash2, ChevronDown, ChevronRight, Sparkles, Image as ImageIcon, Wand2, ImagePlus, FolderOpen, History } from 'lucide-react';
 import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig, IterationContext, IterationMode } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
@@ -8,12 +8,10 @@ import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { BatchImageGrid } from './BatchImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
-import { RefImageRow } from './RefImageRow';
 import { SamplePromptChips } from './SamplePromptChips';
 import { PortfolioPicker } from './PortfolioPicker';
 import {
   getFavoriteButtonStyles,
-  getRefImageButtonStyles,
   inputBaseStyles,
   selectBaseStyles,
   selectSmallStyles,
@@ -162,9 +160,27 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   }, []);
 
   // 参考图弹出层
-  const [showRefPopover, setShowRefPopover] = useState(false);
-  const [showMobilePortfolio, setShowMobilePortfolio] = useState(false);
+  const [isDragOverRef, setIsDragOverRef] = useState(false);
+  const [showPortfolioPicker, setShowPortfolioPicker] = useState(false);
+  const [isRefPanelOpen, setIsRefPanelOpen] = useState(false);
   const portfolioTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const refPanelRef = useRef<HTMLDivElement>(null);
+
+  // 点击外部关闭参考图面板（触摸设备）
+  useEffect(() => {
+    if (!isRefPanelOpen) return;
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (refPanelRef.current && !refPanelRef.current.contains(e.target as Node)) {
+        setIsRefPanelOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [isRefPanelOpen]);
 
   // Kie AI 预设模型列表（Kie AI 不支持 /v1/models 端点）
   // 参考: https://kie.ai/nano-banana, https://kie.ai/nano-banana-pro, https://kie.ai/google/imagen4
@@ -222,7 +238,9 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const [currentImages, setCurrentImages] = useState<GeneratedImage[]>([]);
   const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [apiConfigExpanded, setApiConfigExpanded] = useState(false);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
+  const historyRef = useRef<HTMLDivElement>(null);
 
   // 从 Portfolio 恢复历史生成记录
   useEffect(() => {
@@ -234,6 +252,15 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     });
     return () => { cancelled = true; };
   }, [activeProviderId]);
+
+  // 历史记录展开时自动滚动
+  useEffect(() => {
+    if (historyExpanded && historyRef.current) {
+      requestAnimationFrame(() => {
+        historyRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    }
+  }, [historyExpanded]);
 
   // Batch Hook
   const {
@@ -597,11 +624,13 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
 
     try {
+      // 使用 UI 可见的 "每词" 数量，而非 params.count（可能来自旧草稿残留值）
       const currentParams: GenerationParams = {
         ...params,
         prompt: finalPrompt,
         referenceImages: refImages,
         model: model as ModelType,
+        count: safePreviewCountPerPrompt,
       };
 
       const slotIds = Array.from({ length: currentParams.count }, () => crypto.randomUUID());
@@ -680,27 +709,36 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
-    const files: File[] = [];
-    for (let i = 0; i < fileList.length; i++) files.push(fileList[i]);
+    const files = Array.from(fileList) as File[];
 
-    const newImages: string[] = [];
-    let processedCount = 0;
+    try {
+      const newImages = await Promise.all(
+        files.map(file =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+              if (typeof reader.result === 'string') {
+                resolve(reader.result);
+              } else {
+                reject(new Error('Failed to read file'));
+              }
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          })
+        )
+      );
+      setRefImages((prev) => [...prev, ...newImages].slice(0, MAX_REF_IMAGES));
+    } catch (err) {
+      showToast('图片上传失败', 'error');
+    }
 
-    files.forEach((file) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        if (typeof reader.result === 'string') newImages.push(reader.result);
-        processedCount++;
-        if (processedCount === files.length) {
-          setRefImages((prev) => [...prev, ...newImages].slice(0, MAX_REF_IMAGES));
-        }
-      };
-      reader.readAsDataURL(file);
-    });
+    // 清空 input value，允许重复上传相同文件
+    e.target.value = '';
   };
 
   const removeRefImage = (index: number) => {
@@ -736,101 +774,129 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
       <div className="aurora-main-row">
         {/* 左侧边栏：API 配置 */}
         <aside className="aurora-sidebar space-y-4">
-          <div className="aurora-section-header">
-            <Plug className="w-4 h-4 text-banana-500" />
-            <span className="aurora-section-title">Kie AI 设置</span>
-          </div>
-
-          {/* 供应商选择 */}
-          <div className="space-y-2">
-            <label className="text-xs text-text-muted">供应商</label>
-            <select
-              value={activeProviderId}
-              onChange={(e) => void handleSelectProvider(e.target.value)}
-              className={selectBaseStyles}
-            >
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {(p.favorite ? '★ ' : '') + p.name}
-                </option>
-              ))}
-            </select>
-            <div className="flex gap-1.5">
-              <button
-                type="button"
-                onClick={() => void handleCreateProvider()}
-                className="flex-1 h-8 flex items-center justify-center gap-1 rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary hover:border-smoke transition-colors text-xs"
-                title="新增供应商"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                新增
-              </button>
-              <button
-                type="button"
-                onClick={handleToggleFavorite}
-                className={getFavoriteButtonStyles(providerFavorite)}
-                title="收藏"
-                aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
-              >
-                <Star className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => void handleDeleteProvider()}
-                className="h-8 w-8 flex items-center justify-center rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-error hover:border-error/50 transition-colors"
-                title="删除供应商"
-                aria-label="删除供应商"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-          </div>
-
-          {/* 供应商名称编辑 */}
-          <div className="space-y-2">
-            <label className="text-xs text-text-muted">供应商名称</label>
-            <input
-              type="text"
-              value={providerName}
-              onChange={(e) => setProviderName(e.target.value)}
-              placeholder="自定义名称..."
-              className={inputBaseStyles}
-            />
-          </div>
-
-          {/* API Key */}
-          <form className="space-y-2" onSubmit={(e) => e.preventDefault()} autoComplete="off">
-            <label className="text-xs text-text-muted">API Key</label>
-            <input
-              type="password"
-              value={settings.apiKey}
-              onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
-              placeholder="API Key"
-              className={inputBaseStyles}
-              autoComplete="off"
-            />
+          {/* Collapsible header */}
+          <button
+            type="button"
+            onClick={() => setApiConfigExpanded(v => !v)}
+            className="w-full flex items-center gap-2 text-left"
+          >
+            <Settings className="w-4 h-4 text-banana-500" />
+            <span className="aurora-section-title flex-1">Kie AI 设置</span>
             {!settings.apiKey.trim() && (
-              <p className="text-xs text-warning/80">未填写 API Key，生成/增强将不可用。</p>
+              <span className="w-2 h-2 rounded-full bg-warning animate-pulse" title="未配置 API Key" />
             )}
-          </form>
+            {apiConfigExpanded ? <ChevronDown className="w-3.5 h-3.5 text-text-muted" /> : <ChevronRight className="w-3.5 h-3.5 text-text-muted" />}
+          </button>
 
-          {/* Base URL */}
-          <div className="space-y-2">
-            <label className="text-xs text-text-muted">Base URL</label>
-            <input
-              type="text"
-              value={settings.baseUrl}
-              onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
-              placeholder="https://api.kie.ai"
-              className={inputBaseStyles}
-            />
-            {!settings.baseUrl.trim() && (
-              <p className="text-xs text-warning/80">未填写 Base URL，生成/增强将不可用。</p>
-            )}
+          {apiConfigExpanded && (
+            <div className="space-y-3 pt-1">
+              {/* 供应商选择 */}
+              <div className="space-y-2">
+                <label className="text-xs text-text-muted">供应商</label>
+                <select
+                  value={activeProviderId}
+                  onChange={(e) => void handleSelectProvider(e.target.value)}
+                  className={selectBaseStyles}
+                >
+                  {providers.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {(p.favorite ? '★ ' : '') + p.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void handleCreateProvider()}
+                    className="flex-1 h-8 flex items-center justify-center gap-1 rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary hover:border-smoke transition-colors text-xs"
+                    title="新增供应商"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    新增
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleFavorite}
+                    className={getFavoriteButtonStyles(providerFavorite)}
+                    title="收藏"
+                    aria-label={providerFavorite ? '取消收藏供应商' : '收藏供应商'}
+                  >
+                    <Star className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteProvider()}
+                    className="h-8 w-8 flex items-center justify-center rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-error hover:border-error/50 transition-colors"
+                    title="删除供应商"
+                    aria-label="删除供应商"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* 供应商名称编辑 */}
+              <div className="space-y-2">
+                <label className="text-xs text-text-muted">供应商名称</label>
+                <input
+                  type="text"
+                  value={providerName}
+                  onChange={(e) => setProviderName(e.target.value)}
+                  placeholder="自定义名称..."
+                  className={inputBaseStyles}
+                />
+              </div>
+
+              {/* API Key */}
+              <form className="space-y-2" onSubmit={(e) => e.preventDefault()} autoComplete="off">
+                <label className="text-xs text-text-muted">API Key</label>
+                <input
+                  type="password"
+                  value={settings.apiKey}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, apiKey: e.target.value }))}
+                  placeholder="API Key"
+                  className={inputBaseStyles}
+                  autoComplete="off"
+                />
+                {!settings.apiKey.trim() && (
+                  <p className="text-xs text-warning/80">未填写 API Key，无法生成。</p>
+                )}
+              </form>
+
+              {/* Base URL（高级） */}
+              <div className="space-y-2">
+                <label className="text-xs text-text-muted flex items-center gap-1">
+                  Base URL
+                  <span className="text-[10px] text-text-disabled">(可选)</span>
+                </label>
+                <input
+                  type="text"
+                  value={settings.baseUrl}
+                  onChange={(e) => setSettings((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                  placeholder="https://api.kie.ai"
+                  className={inputBaseStyles}
+                />
+              </div>
+            </div>
+          )}
+
+          {/* 分隔线 */}
+          <div className="border-t border-ash" />
+
+          {/* 提示词优化器 */}
+          <div className="aurora-section-header">
+            <Wand2 className="w-4 h-4 text-banana-500" />
+            <span className="aurora-section-title">提示词优化器</span>
           </div>
+          <PromptOptimizerSettings
+            onConfigChange={handleOptimizerConfigChange}
+            currentPrompt={prompt}
+            onOptimize={handleOptimizePrompt}
+            isOptimizing={isOptimizing}
+          />
         </aside>
 
-        {/* 中间画布：图片展示 */}
+        {/* 中间画布：图片展示 + 悬浮提示词 */}
         <div className="aurora-canvas">
           <div className="aurora-canvas-header">
             <div className="flex items-center gap-2">
@@ -838,10 +904,21 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               <span className="aurora-section-title">生成结果</span>
             </div>
             <div className="flex items-center gap-2">
+              {historyImages.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setHistoryExpanded(v => !v)}
+                  className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  {historyExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                  <History className="w-3.5 h-3.5" />
+                  <span>历史记录 ({historyImages.length}张)</span>
+                </button>
+              )}
               {currentImages.length > 0 && !isBusy && (
                 <button
                   type="button"
-                  onClick={() => setCurrentImages([])}
+                  onClick={() => { setCurrentImages([]); setGeneratedSlots([]); }}
                   className="text-xs text-text-muted hover:text-text-primary transition-colors"
                 >
                   清空本轮
@@ -850,75 +927,104 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
               <span className="aurora-badge aurora-badge-gold">Kie AI</span>
             </div>
           </div>
-          <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`}>
-            {/* 批量模式进度条 */}
-            {isBatchMode && batchTasks.length > 0 && (
-              <div className="aurora-batch-progress">
-                <div className="flex items-center justify-between mb-2 gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="text-sm text-text-secondary whitespace-nowrap">
-                      批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-2 text-xs">
-                      <span className="text-success">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
-                      <span className="text-error">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
-                      <span className="text-text-muted">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
-                    </div>
-                    {isBatchGenerating && (
-                      <button
-                        type="button"
-                        onClick={stopBatch}
-                        className="h-7 px-2 rounded-[var(--radius-md)] border border-error/40 bg-error/10 text-error hover:bg-error/20 transition-colors text-xs"
-                      >
-                        取消
-                      </button>
-                    )}
-                    {!isBatchGenerating &&
-                      batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
-                      batchTasks.some(t => (t.images?.length || 0) > 0) && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => void downloadAll()}
-                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
-                          >
-                            下载全部
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void downloadSelected()}
-                            disabled={selectedBatchImageIds.length === 0}
-                            className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
-                          >
-                            下载选中
-                          </button>
-                        </>
-                      )}
-                  </div>
-                </div>
-              </div>
-            )}
-            {isBatchMode ? (
-              <>
-                <BatchImageGrid
-                  tasks={batchTasks}
-                  countPerPrompt={safePreviewCountPerPrompt}
-                  selectedImageIds={selectedBatchImageIds}
-                  onToggleSelect={(id) => {
-                    setSelectedBatchImageIds((prev) =>
-                      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
-                    );
-                  }}
+          <div className={`aurora-canvas-body ${isBatchMode ? 'aurora-canvas-body-batch' : ''}`} style={{ paddingBottom: '240px' }}>
+            {historyExpanded && historyImages.length > 0 ? (
+              <div ref={historyRef}>
+                <ImageGrid
+                  images={historyImages}
+                  isGenerating={false}
+                  params={params}
+                  maxColumns={8}
+                  gap={8}
                   onImageClick={onImageClick}
                   onEdit={onEdit}
                   onIterate={handleIterate}
                 />
-                {/* 批量模式下，迭代生成的新图单独展示 */}
-                {currentImages.length > 0 && (
-                  <div className="mt-4">
-                    <div className="text-xs text-text-muted mb-2 px-1">迭代生成 ({currentImages.length})</div>
+              </div>
+            ) : (
+              <>
+                {/* 批量模式进度条 */}
+                {isBatchMode && batchTasks.length > 0 && (
+                  <div className="aurora-batch-progress">
+                    <div className="flex items-center justify-between mb-2 gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm text-text-secondary whitespace-nowrap">
+                          批量任务进度：{batchTasks.filter(t => t.status === 'success' || t.status === 'error').length}/{batchTasks.length}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex gap-2 text-xs">
+                          <span className="text-success">{batchTasks.filter(t => t.status === 'success').length} 成功</span>
+                          <span className="text-error">{batchTasks.filter(t => t.status === 'error').length} 失败</span>
+                          <span className="text-text-muted">{batchTasks.filter(t => t.status === 'pending' || t.status === 'running').length} 进行中</span>
+                        </div>
+                        {isBatchGenerating && (
+                          <button
+                            type="button"
+                            onClick={stopBatch}
+                            className="h-7 px-2 rounded-[var(--radius-md)] border border-error/40 bg-error/10 text-error hover:bg-error/20 transition-colors text-xs"
+                          >
+                            取消
+                          </button>
+                        )}
+                        {!isBatchGenerating &&
+                          batchTasks.every(t => t.status === 'success' || t.status === 'error') &&
+                          batchTasks.some(t => (t.images?.length || 0) > 0) && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void downloadAll()}
+                                className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs"
+                              >
+                                下载全部
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void downloadSelected()}
+                                disabled={selectedBatchImageIds.length === 0}
+                                className="h-7 px-2 rounded-[var(--radius-md)] border border-ash bg-void text-text-secondary hover:text-text-primary hover:border-smoke transition-colors text-xs disabled:opacity-40"
+                              >
+                                下载选中
+                              </button>
+                            </>
+                          )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {isBatchMode ? (
+                  <>
+                    <BatchImageGrid
+                      tasks={batchTasks}
+                      countPerPrompt={safePreviewCountPerPrompt}
+                      selectedImageIds={selectedBatchImageIds}
+                      onToggleSelect={(id) => {
+                        setSelectedBatchImageIds((prev) =>
+                          prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+                        );
+                      }}
+                      onImageClick={onImageClick}
+                      onEdit={onEdit}
+                      onIterate={handleIterate}
+                    />
+                    {/* 批量模式下，迭代生成的新图单独展示 */}
+                    {currentImages.length > 0 && (
+                      <div className="mt-4">
+                        <div className="text-xs text-text-muted mb-2 px-1">迭代生成 ({currentImages.length})</div>
+                        <ImageGrid
+                          images={currentImages}
+                          slots={generatedSlots}
+                          isGenerating={isGenerating}
+                          params={params}
+                          onImageClick={onImageClick}
+                          onEdit={onEdit}
+                          onIterate={handleIterate}
+                        />
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  (currentImages.length > 0 || isGenerating || generatedSlots.length > 0 || historyImages.length === 0) && (
                     <ImageGrid
                       images={currentImages}
                       slots={generatedSlots}
@@ -928,49 +1034,264 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                       onEdit={onEdit}
                       onIterate={handleIterate}
                     />
-                  </div>
-                )}
-              </>
-            ) : (
-              <>
-                <ImageGrid
-                  images={currentImages}
-                  slots={generatedSlots}
-                  isGenerating={isGenerating}
-                  params={params}
-                  onImageClick={onImageClick}
-                  onEdit={onEdit}
-                  onIterate={handleIterate}
-                />
-                {historyImages.length > 0 && (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setHistoryExpanded(v => !v)}
-                      className="w-full flex items-center gap-2 py-2 px-1 text-xs text-text-muted hover:text-text-primary transition-colors border-t border-dark-border mt-3"
-                    >
-                      {historyExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-                      <History className="w-3.5 h-3.5" />
-                      <span>历史记录 ({historyImages.length}张)</span>
-                    </button>
-                    {historyExpanded && (
-                      <ImageGrid
-                        images={historyImages}
-                        isGenerating={false}
-                        params={params}
-                        onImageClick={onImageClick}
-                        onEdit={onEdit}
-                        onIterate={handleIterate}
-                      />
-                    )}
-                  </>
+                  )
                 )}
               </>
             )}
           </div>
+
+          {/* 悬浮提示词组件 */}
+          <div className="aurora-floating-prompt">
+            {/* 提示词输入（参考图融合） */}
+            <div className="aurora-prompt-box">
+              {/* 参考图触发区 */}
+              <div
+                ref={refPanelRef}
+                className={`aurora-ref-trigger ${isDragOverRef ? 'drag-over' : ''}`}
+                onClick={(e) => {
+                  // Toggle panel on click/tap (for touch devices)
+                  // Only toggle if clicking on the trigger itself, not the panel
+                  const target = e.target as HTMLElement;
+                  if (target.closest('.aurora-ref-panel')) {
+                    // Click inside panel - don't toggle
+                    return;
+                  }
+                  setIsRefPanelOpen((prev) => !prev);
+                }}
+                onDragOver={(e) => {
+                  if (e.dataTransfer.types.includes('application/x-nano-ref-image')) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'copy';
+                    setIsDragOverRef(true);
+                  }
+                }}
+                onDragLeave={() => setIsDragOverRef(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDragOverRef(false);
+                  const data = e.dataTransfer.getData('application/x-nano-ref-image');
+                  if (data) addRefImages([data]);
+                }}
+              >
+                {/* 堆叠态 / 空态 */}
+                {refImages.length === 0 ? (
+                  <div className="aurora-ref-empty">
+                    <ImagePlus className="w-4 h-4" />
+                    <span>参考图</span>
+                  </div>
+                ) : (
+                  <div className="aurora-ref-stack">
+                    {refImages.slice(0, 3).map((img, i) => (
+                      <div key={i} className="aurora-ref-stack-card">
+                        <img src={img} alt="" />
+                      </div>
+                    ))}
+                    <span className="aurora-ref-stack-badge">{refImages.length}</span>
+                  </div>
+                )}
+
+                {/* 悬浮展开面板 */}
+                <div 
+                  className={`aurora-ref-panel ${isRefPanelOpen ? 'force-open' : ''}`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="aurora-ref-panel-header">
+                    <span className="text-xs text-text-muted">参考图 ({refImages.length}/{MAX_REF_IMAGES})</span>
+                  </div>
+                  {refImages.length > 0 && (
+                    <div className="aurora-ref-panel-grid">
+                      {refImages.map((img, idx) => (
+                        <div key={idx} className="aurora-ref-panel-thumb">
+                          <img src={img} alt={`Ref ${idx + 1}`} />
+                          <button
+                            type="button"
+                            onClick={() => removeRefImage(idx)}
+                            aria-label="移除参考图"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="aurora-ref-panel-actions">
+                    <label>
+                      <ImagePlus className="w-3.5 h-3.5" />
+                      <span>本地上传</span>
+                      <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
+                    </label>
+                    <div
+                      className="relative"
+                      onMouseEnter={() => {
+                        if (portfolioTimerRef.current) {
+                          clearTimeout(portfolioTimerRef.current);
+                          portfolioTimerRef.current = undefined;
+                        }
+                        setShowPortfolioPicker(true);
+                      }}
+                      onMouseLeave={() => {
+                        portfolioTimerRef.current = setTimeout(() => {
+                          setShowPortfolioPicker(false);
+                        }, 250);
+                      }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => setShowPortfolioPicker((v) => !v)}
+                      >
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>作品集</span>
+                      </button>
+                      {showPortfolioPicker && (
+                        <PortfolioPicker
+                          selectedImages={refImages}
+                          onPick={(base64) => {
+                            const idx = refImages.indexOf(base64);
+                            if (idx >= 0) {
+                              removeRefImage(idx);
+                            } else {
+                              addRefImages([base64]);
+                            }
+                          }}
+                          onClose={() => setShowPortfolioPicker(false)}
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 分隔线 */}
+              {refImages.length > 0 && <div className="aurora-ref-divider" />}
+
+              {/* 文本输入 */}
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="描述你想要的画面..."
+                className="aurora-prompt-box-textarea"
+              />
+            </div>
+            {!settings.apiKey.trim() && (
+              <p className="mt-2 text-xs text-warning/80">
+                未填写 API Key，无法生成。
+              </p>
+            )}
+            {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
+
+            {/* 配置栏 + 生成按钮 */}
+            <div className="aurora-config-bar">
+              <div className="aurora-config-item">
+                <label>模型</label>
+                <select
+                  value={customModel}
+                  onChange={(e) => setCustomModel(e.target.value)}
+                >
+                  {KIE_PRESET_MODELS.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="aurora-config-item">
+                <label>比例</label>
+                <select
+                  value={params.aspectRatio}
+                  onChange={(e) => setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))}
+                >
+                  {aspectRatioOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="aurora-config-item">
+                <label>尺寸</label>
+                <select
+                  value={params.imageSize}
+                  onChange={(e) => setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))}
+                >
+                  {['1K', '2K', '4K'].map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="aurora-config-item">
+                <label>格式</label>
+                <select
+                  value={params.outputFormat || 'png'}
+                  onChange={(e) => setParams((prev) => ({ ...prev, outputFormat: e.target.value as NonNullable<GenerationParams['outputFormat']> }))}
+                >
+                  {['png', 'jpg'].map((f) => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="aurora-config-item">
+                <label>并发</label>
+                <select
+                  value={batchConfig.concurrency}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1) return;
+                    setBatchConfig((prev) => ({ ...prev, concurrency: v }));
+                  }}
+                  disabled={isBusy}
+                >
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="aurora-config-item">
+                <label>每词</label>
+                <select
+                  value={batchConfig.countPerPrompt}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    if (!Number.isFinite(v) || v < 1) return;
+                    setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
+                  }}
+                  disabled={isBusy}
+                >
+                  {[1, 2, 3, 4].map((n) => (
+                    <option key={n} value={n}>{n}</option>
+                  ))}
+                </select>
+              </div>
+              {batchPromptCount > 0 && (
+                <span className="text-xs text-banana-500 whitespace-nowrap">
+                  提示词:{batchPromptCount} · 每词:{safePreviewCountPerPrompt} · 共{batchPromptCount * safePreviewCountPerPrompt}张
+                </span>
+              )}
+              <button
+                onClick={isBusy ? handleStop : handleGenerate}
+                disabled={!isBusy && !canGenerate}
+                className={`aurora-generate-btn-inline ${isBusy ? 'stopping' : ''}`}
+              >
+                {isBusy ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>停止</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>生成</span>
+                  </>
+                )}
+              </button>
+              {isBatchMode && batchTasks.length > 0 && !isBusy && (
+                <button
+                  onClick={clearBatch}
+                  className="text-xs text-text-muted hover:text-text-primary transition-colors"
+                >
+                  清除队列
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* 右侧迭代助手（≥1200px 才显示） */}
+        {/* 右侧迭代助手 */}
         <aside className="aurora-assistant">
           <IterationAssistant
             currentPrompt={prompt}
@@ -984,282 +1305,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
             onSwitchTarget={handleSwitchTarget}
           />
         </aside>
-      </div>
-
-      {/* ========== 底部提示词区：优化器 + 输入 + 配置 ========== */}
-      <div className="aurora-prompt-area">
-        {/* 左列：提示词优化器 */}
-        <div className="aurora-prompt-optimizer">
-          <div className="aurora-section-header">
-            <Wand2 className="w-4 h-4 text-banana-500" />
-            <span className="aurora-section-title">提示词优化器</span>
-          </div>
-          <PromptOptimizerSettings
-            onConfigChange={handleOptimizerConfigChange}
-            currentPrompt={prompt}
-            onOptimize={handleOptimizePrompt}
-            isOptimizing={isOptimizing}
-          />
-        </div>
-
-        {/* 中列：提示词输入 */}
-        <div className="aurora-prompt-input">
-          <RefImageRow
-            images={refImages}
-            maxImages={MAX_REF_IMAGES}
-            onFileUpload={handleFileUpload}
-            onRemove={removeRefImage}
-            onAddImages={addRefImages}
-          />
-
-          <div className="aurora-textarea-wrapper flex-1">
-            <div className="aurora-prompt-box">
-              <Sparkles className="aurora-prompt-box-icon" />
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="描述你想要的画面..."
-                className="aurora-prompt-box-textarea"
-              />
-            </div>
-            {!prompt.trim() && <SamplePromptChips onPick={setPrompt} />}
-          </div>
-
-          {/* 小屏参考图按钮 */}
-          <div className="lg:hidden relative">
-            <button
-              onClick={() => setShowRefPopover(!showRefPopover)}
-              className={getRefImageButtonStyles(refImages.length > 0)}
-            >
-              <ImageIcon className="w-3.5 h-3.5" />
-              <span className="text-xs">参考图 {refImages.length}/{MAX_REF_IMAGES}</span>
-            </button>
-            {showRefPopover && (
-              <div className="absolute bottom-full left-0 mb-2 w-64 bg-graphite border border-ash rounded-[var(--radius-md)] p-3 shadow-[var(--shadow-floating)] z-10">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-text-muted">参考图 ({refImages.length}/{MAX_REF_IMAGES})</span>
-                  <button
-                    type="button"
-                    aria-label="关闭参考图"
-                    onClick={() => setShowRefPopover(false)}
-                    className="text-text-muted hover:text-text-primary"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                {refImages.length > 0 && (
-                  <div className="grid grid-cols-4 gap-1.5 mb-2">
-                    {refImages.map((img, idx) => (
-                      <div key={idx} className="relative aspect-square rounded-[var(--radius-md)] overflow-hidden border border-ash group">
-                        <img src={img} alt={`Ref ${idx}`} className="w-full h-full object-cover" />
-                        <button
-                          onClick={() => removeRefImage(idx)}
-                          aria-label="移除参考图"
-                          className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
-                        >
-                          <X className="w-3 h-3 text-white" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex gap-1.5">
-                  <label className="flex-1 flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors">
-                    <Plus className="w-3.5 h-3.5 mr-1" />
-                    添加参考图
-                    <input type="file" className="hidden" accept="image/*" multiple onChange={handleFileUpload} />
-                  </label>
-                  <div
-                    className="relative flex-1"
-                    onMouseEnter={() => {
-                      if (portfolioTimerRef.current) {
-                        clearTimeout(portfolioTimerRef.current);
-                        portfolioTimerRef.current = undefined;
-                      }
-                      setShowMobilePortfolio(true);
-                    }}
-                    onMouseLeave={() => {
-                      portfolioTimerRef.current = setTimeout(() => {
-                        setShowMobilePortfolio(false);
-                      }, 250);
-                    }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setShowMobilePortfolio((v) => !v)}
-                      className="w-full flex items-center justify-center h-8 text-xs text-text-muted hover:text-text-primary border border-dashed border-ash hover:border-banana-500/50 rounded-[var(--radius-md)] cursor-pointer transition-colors"
-                    >
-                      <FolderOpen className="w-3.5 h-3.5 mr-1" />
-                      作品集
-                    </button>
-                    {showMobilePortfolio && (
-                      <PortfolioPicker
-                        selectedImages={refImages}
-                        onPick={(base64) => {
-                          const idx = refImages.indexOf(base64);
-                          if (idx >= 0) {
-                            removeRefImage(idx);
-                          } else {
-                            addRefImages([base64]);
-                          }
-                        }}
-                        onClose={() => setShowMobilePortfolio(false)}
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 右列：参数配置（outputFormat 保留在此） */}
-        <div className="aurora-prompt-config">
-          {/* 模型 */}
-          <div>
-            <label className="text-xs text-text-muted mb-1 block">模型</label>
-            <div className="relative">
-              <select
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                className={selectBaseStyles}
-              >
-                {KIE_PRESET_MODELS.map((m) => (
-                  <option key={m.id} value={m.id}>{m.label}</option>
-                ))}
-              </select>
-              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
-            </div>
-          </div>
-
-          {/* 比例 + 尺寸 */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">比例</label>
-              <div className="relative">
-                <select
-                  value={params.aspectRatio}
-                  onChange={(e) => setParams((prev) => ({ ...prev, aspectRatio: e.target.value as GenerationParams['aspectRatio'] }))}
-                  className={selectSmallStyles}
-                >
-                  {aspectRatioOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">尺寸</label>
-              <div className="relative">
-                <select
-                  value={params.imageSize}
-                  onChange={(e) => setParams((prev) => ({ ...prev, imageSize: e.target.value as GenerationParams['imageSize'] }))}
-                  className={selectSmallStyles}
-                >
-                  <option value="1K">1K</option>
-                  <option value="2K">2K</option>
-                  <option value="4K">4K</option>
-                </select>
-                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-              </div>
-            </div>
-          </div>
-
-          {/* 输出格式 */}
-          <div>
-            <label className="text-xs text-text-muted mb-1 block">格式</label>
-            <div className="relative">
-              <select
-                value={params.outputFormat || 'png'}
-                onChange={(e) => setParams((prev) => ({ ...prev, outputFormat: e.target.value as NonNullable<GenerationParams['outputFormat']> }))}
-                className={selectSmallStyles}
-              >
-                <option value="png">png</option>
-                <option value="jpg">jpg</option>
-              </select>
-              <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-            </div>
-          </div>
-
-          {/* 批量任务配置 */}
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">并发数</label>
-              <div className="relative">
-                <select
-                  value={batchConfig.concurrency}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1) return;
-                    setBatchConfig((prev) => ({ ...prev, concurrency: v }));
-                  }}
-                  className={selectSmallStyles}
-                  disabled={isBusy}
-                >
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs text-text-muted mb-1 block">每提示词</label>
-              <div className="relative">
-                <select
-                  value={batchConfig.countPerPrompt}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    if (!Number.isFinite(v) || v < 1) return;
-                    setBatchConfig((prev) => ({ ...prev, countPerPrompt: v }));
-                  }}
-                  className={selectSmallStyles}
-                  disabled={isBusy}
-                >
-                  {[1, 2, 3, 4].map((n) => (
-                    <option key={n} value={n}>{n}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-text-muted pointer-events-none" />
-              </div>
-            </div>
-          </div>
-
-          {/* 生成按钮 */}
-          <div className="mt-auto space-y-1">
-            {batchPromptCount > 0 && (
-              <span className="text-xs text-banana-500 text-center block">
-                提示词:{batchPromptCount}，每提示词:{safePreviewCountPerPrompt} 图片数{batchPromptCount * safePreviewCountPerPrompt}
-              </span>
-            )}
-            <button
-              onClick={isBusy ? handleStop : handleGenerate}
-              disabled={!isBusy && !canGenerate}
-              className={`aurora-generate-btn ${isBusy ? 'stopping' : ''}`}
-            >
-              {isBusy ? (
-                <>
-                  <RefreshCw className="w-5 h-5 animate-spin" />
-                  <span>停止</span>
-                </>
-              ) : (
-                <>
-                  <Sparkles className="w-5 h-5" />
-                  <span>生成</span>
-                </>
-              )}
-            </button>
-            {isBatchMode && batchTasks.length > 0 && !isBusy && (
-              <button
-                onClick={clearBatch}
-                className="w-full h-6 text-xs text-text-muted hover:text-text-primary transition-colors"
-              >
-                清除队列
-              </button>
-            )}
-          </div>
-        </div>
       </div>
     </div>
   );
