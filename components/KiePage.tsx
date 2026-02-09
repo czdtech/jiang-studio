@@ -28,6 +28,7 @@ import {
   upsertDraft as upsertDraftInDb,
   upsertProvider as upsertProviderInDb,
 } from '../services/db';
+import { compressImage } from '../services/shared';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
 import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
 
@@ -392,7 +393,11 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           model: ModelType.CUSTOM,
           outputFormat: draft.params?.outputFormat || 'png',
         });
-        setRefImages(draft.refImages || []);
+        if (draft.refImages && draft.refImages.length > 0) {
+          void Promise.all(draft.refImages.map(img => compressImage(img))).then(setRefImages);
+        } else {
+          setRefImages([]);
+        }
         setCustomModel(draft.model || activeProvider.defaultModel || 'google/nano-banana');
       } else {
         setPrompt('');
@@ -716,7 +721,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     const files = Array.from(fileList) as File[];
 
     try {
-      const newImages = await Promise.all(
+      const rawImages = await Promise.all(
         files.map(file =>
           new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -732,6 +737,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           })
         )
       );
+      const newImages = await Promise.all(rawImages.map(img => compressImage(img)));
       setRefImages((prev) => [...prev, ...newImages].slice(0, MAX_REF_IMAGES));
     } catch (err) {
       showToast('图片上传失败', 'error');
@@ -745,8 +751,9 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const addRefImages = useCallback((dataUrls: string[]) => {
-    setRefImages((prev) => [...prev, ...dataUrls].slice(0, MAX_REF_IMAGES));
+  const addRefImages = useCallback(async (dataUrls: string[]) => {
+    const compressed = await Promise.all(dataUrls.map(img => compressImage(img)));
+    setRefImages((prev) => [...prev, ...compressed].slice(0, MAX_REF_IMAGES));
   }, []);
 
   const canGenerate =

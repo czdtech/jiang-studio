@@ -31,6 +31,7 @@ import {
   setPromptOptimizerConfig,
   getRecentImagesByScope,
 } from '../services/db';
+import { compressImage } from '../services/shared';
 import { useProviderManagement } from '../hooks/useProviderManagement';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
 import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
@@ -112,7 +113,11 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
           ...draft.params,
           model: normalizeGeminiModel(draft.params?.model),
         });
-        setRefImages(draft.refImages || []);
+        if (draft.refImages && draft.refImages.length > 0) {
+          void Promise.all(draft.refImages.map(img => compressImage(img))).then(setRefImages);
+        } else {
+          setRefImages([]);
+        }
       } else {
         setPrompt('');
         setRefImages([]);
@@ -563,7 +568,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     const maxImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
 
     try {
-      const newImages = await Promise.all(
+      const rawImages = await Promise.all(
         files.map(file =>
           new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
@@ -579,6 +584,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
           })
         )
       );
+      const newImages = await Promise.all(rawImages.map(img => compressImage(img)));
       setRefImages((prev) => [...prev, ...newImages].slice(0, maxImages));
     } catch (err) {
       showToast('图片上传失败', 'error');
@@ -601,9 +607,10 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     setRefImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const addRefImages = useCallback((dataUrls: string[]) => {
+  const addRefImages = useCallback(async (dataUrls: string[]) => {
     const max = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
-    setRefImages((prev) => [...prev, ...dataUrls].slice(0, max));
+    const compressed = await Promise.all(dataUrls.map(img => compressImage(img)));
+    setRefImages((prev) => [...prev, ...compressed].slice(0, max));
   }, [params.model]);
 
   const maxRefImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;

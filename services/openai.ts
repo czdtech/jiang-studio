@@ -21,7 +21,7 @@ import {
 import { debugLog } from './logger';
 
 const MAX_CONCURRENCY = 2;
-const REQUEST_TIMEOUT_MS = 60000;
+const REQUEST_TIMEOUT_MS = 120000;
 
 const createTimeoutSignal = (signal?: AbortSignal, timeoutMs?: number) => {
   if (!timeoutMs || timeoutMs <= 0) {
