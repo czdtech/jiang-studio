@@ -20,12 +20,11 @@ interface IterationSession {
   createdAt: number;
 }
 
-/** 快捷建议芯片 */
-const SUGGESTION_CHIPS = [
-  '让画面更温暖',
-  '添加更多细节',
-  '换一种风格',
-  '增加光影效果',
+/** 快捷建议芯片（按分类分组） */
+const SUGGESTION_CHIP_GROUPS = [
+  { label: '构图/视角', chips: ['特写镜头', '俯瞰全景', '留出标题空间'] },
+  { label: '色彩/氛围', chips: ['高饱和撞色', '暗调电影感', '青橙电影调'] },
+  { label: '画质/细节', chips: ['提升清晰度', '修复人物细节', '增强光影对比'] },
 ];
 
 interface IterationAssistantProps {
@@ -446,20 +445,25 @@ export const IterationAssistant = ({
                   : 'AI 将帮你逐步迭代优化提示词'}
               </p>
             </div>
-            {effectivePrompt.trim() && (
-              <div className="aurora-assistant-chips">
-                {SUGGESTION_CHIPS.map((chip) => (
-                  <button
-                    key={chip}
-                    type="button"
-                    onClick={() => handleChipClick(chip)}
-                    className="aurora-assistant-chip"
-                  >
-                    {chip}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="aurora-assistant-chip-groups">
+              {SUGGESTION_CHIP_GROUPS.map((group) => (
+                <div key={group.label} className="aurora-assistant-chip-group">
+                  <span className="aurora-assistant-chip-group-label">{group.label}</span>
+                  <div className="aurora-assistant-chips">
+                    {group.chips.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        onClick={() => handleChipClick(chip)}
+                        className="aurora-assistant-chip"
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
             <div className="aurora-assistant-inline-input">
               {inputElement}
             </div>

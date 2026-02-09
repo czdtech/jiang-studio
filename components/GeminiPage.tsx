@@ -15,7 +15,7 @@ import {
 import { generateImages } from '../services/gemini';
 import { optimizeUserPrompt } from '../services/mcp';
 import { useToast } from './Toast';
-import { ImageGrid } from './ImageGrid';
+import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { BatchImageGrid } from './BatchImageGrid';
 import { PromptOptimizerSettings } from './PromptOptimizerSettings';
 import { IterationAssistant } from './IterationAssistant';
@@ -235,6 +235,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
   // Results: 本轮生成 + 历史记录（折叠）
   const [currentImages, setCurrentImages] = useState<GeneratedImage[]>([]);
+  const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
   const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [apiConfigExpanded, setApiConfigExpanded] = useState(false);
@@ -472,6 +473,10 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
         count: safePreviewCountPerPrompt,
       };
 
+      // 生成前创建 pending slots
+      const slotIds = Array.from({ length: currentParams.count }, () => crypto.randomUUID());
+      setGeneratedSlots(slotIds.map((id) => ({ id, status: 'pending' })));
+
       const outcomes = await generateImages(
         currentParams,
         {
@@ -483,19 +488,24 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
       if (!isMountedRef.current) return;
 
-      const successImages = outcomes
-          .filter(o => o.ok)
-          .map(o => (o as any).image as GeneratedImage)
-          .map(img => ({
-              ...img,
-              sourceScope: scope,
-              sourceProviderId: activeProviderId,
-          }));
+      // 将 outcomes 映射到 slots
+      const nextSlots: ImageGridSlot[] = outcomes.map((o, i) => {
+        if (o.ok === true) {
+          const withSource: GeneratedImage = {
+            ...o.image,
+            sourceScope: scope,
+            sourceProviderId: activeProviderId,
+          };
+          return { id: slotIds[i], status: 'success' as const, image: withSource };
+        }
+        return { id: slotIds[i], status: 'error' as const, error: o.error };
+      });
 
-      const failErrors = outcomes
-          .filter(o => !o.ok)
-          .map(o => (o as any).error as string);
+      const successImages = nextSlots
+        .filter((s): s is Extract<ImageGridSlot, { status: 'success' }> => s.status === 'success')
+        .map((s) => s.image);
 
+      setGeneratedSlots(nextSlots);
       setCurrentImages(prev => [...successImages, ...prev]);
 
       for (const img of successImages) {
@@ -508,7 +518,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
       if (controller.signal.aborted) {
         showToast(successCount > 0 ? `已停止生成（已生成 ${successCount} 张）` : '已停止生成', 'info');
       } else if (successCount === 0) {
-        showToast(`生成失败: ${failErrors[0] || '未知错误'}`, 'error');
+        showToast('生成失败（请查看失败卡片）', 'error');
       } else if (failCount > 0) {
         showToast(`生成完成：成功 ${successCount} 张，失败 ${failCount} 张`, 'info');
       } else {
@@ -518,6 +528,9 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
       if (!isMountedRef.current) return;
       const aborted = (error as any)?.name === 'AbortError' || controller.signal.aborted;
       if (aborted) {
+        setGeneratedSlots((prev) =>
+          prev.map((s) => (s.status === 'pending' ? { id: s.id, status: 'error' as const, error: '已停止' } : s))
+        );
         showToast('已停止生成', 'info');
         return;
       }
@@ -748,7 +761,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
               {currentImages.length > 0 && !isBusy && (
                 <button
                   type="button"
-                  onClick={() => setCurrentImages([])}
+                  onClick={() => { setCurrentImages([]); setGeneratedSlots([]); }}
                   className="text-xs text-text-muted hover:text-text-primary transition-colors"
                 >
                   清空本轮
@@ -844,6 +857,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                         <div className="text-xs text-text-muted mb-2 px-1">迭代生成 ({currentImages.length})</div>
                         <ImageGrid
                           images={currentImages}
+                          slots={generatedSlots}
                           isGenerating={isGenerating}
                           params={params}
                           onImageClick={onImageClick}
@@ -854,9 +868,10 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                     )}
                   </>
                 ) : (
-                  (currentImages.length > 0 || isGenerating || historyImages.length === 0) && (
+                  (currentImages.length > 0 || isGenerating || generatedSlots.length > 0 || historyImages.length === 0) && (
                     <ImageGrid
                       images={currentImages}
+                      slots={generatedSlots}
                       isGenerating={isGenerating}
                       params={params}
                       onImageClick={onImageClick}

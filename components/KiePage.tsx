@@ -670,7 +670,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
       } else if (successCount === 0) {
         showToast('生成失败（请查看失败卡片）', 'error');
       } else if (failCount > 0) {
-        showToast('生成完成（部分失败，请查看卡片）', 'info');
+        showToast(`生成完成：成功 ${successCount} 张，失败 ${failCount} 张`, 'info');
       } else {
         showToast('生成完成', 'success');
       }

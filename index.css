@@ -923,13 +923,36 @@ a:focus-visible,
   line-height: 1.5;
 }
 
+/* Suggestion chip groups */
+.aurora-assistant-chip-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 4px 0;
+  width: 100%;
+}
+
+.aurora-assistant-chip-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aurora-assistant-chip-group-label {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+  white-space: nowrap;
+  min-width: 52px;
+  text-align: right;
+}
+
 /* Suggestion chips */
 .aurora-assistant-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  justify-content: center;
-  padding: 4px 4px 0;
 }
 
 .aurora-assistant-chip {
