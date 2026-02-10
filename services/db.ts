@@ -1,4 +1,4 @@
-import { GeneratedImage, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
+import { GeneratedImage, IterationAssistantConfig, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
 
 const DB_NAME = 'NanoBananaDB';
 const IMAGE_STORE = 'images';
@@ -114,9 +114,30 @@ export const createDefaultPromptOptimizerConfig = (): PromptOptimizerConfig => (
   enabled: true,
   mode: 'manual',
   templateId: 'image-general-optimize',
-  iterateTemplateId: 'image-iterate-general',
   updatedAt: Date.now(),
 });
+
+// ============ Iteration Assistant ============
+
+const ITERATION_ASSISTANT_KEY = 'iterationAssistantConfig';
+
+export const getIterationAssistantConfig = async (): Promise<IterationAssistantConfig> => {
+  const saved = await getSetting<IterationAssistantConfig>(ITERATION_ASSISTANT_KEY);
+  if (saved) return saved;
+
+  // 从旧的 PromptOptimizerConfig 迁移 iterateTemplateId
+  const legacy = await getSetting<Record<string, unknown>>(PROMPT_OPTIMIZER_KEY);
+  const templateId = (typeof legacy?.iterateTemplateId === 'string' && legacy.iterateTemplateId)
+    ? legacy.iterateTemplateId
+    : 'image-iterate-general';
+  const config: IterationAssistantConfig = { templateId, updatedAt: Date.now() };
+  await setSetting(ITERATION_ASSISTANT_KEY, config);
+  return config;
+};
+
+export const setIterationAssistantConfig = async (config: IterationAssistantConfig): Promise<void> => {
+  await setSetting(ITERATION_ASSISTANT_KEY, config);
+};
 
 // ============ Providers ============
 

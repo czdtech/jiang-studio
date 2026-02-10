@@ -5,7 +5,6 @@
 import { BatchTask, BatchTaskStatus, GeneratedImage, ImageGenerationOutcome, BatchConfig, ProviderScope } from '../types';
 import { runWithConcurrency } from './shared';
 
-export const MAX_BATCH_TOTAL = 32;
 export const MAX_BATCH_CONCURRENCY = 8;
 export const MAX_BATCH_COUNT_PER_PROMPT = 4;
 
@@ -141,15 +140,8 @@ export const executeBatch = async (
  */
 export const validateBatchParams = (
     prompts: string[],
-    config: BatchConfig,
-    showToast: (msg: string, type: 'info' | 'error' | 'success') => void
+    _config: BatchConfig,
+    _showToast: (msg: string, type: 'info' | 'error' | 'success') => void
 ): string[] => {
-    const safeCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(config.countPerPrompt || 1)));
-    const maxPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
-
-    if (prompts.length > maxPromptCount) {
-        showToast(`批量模式一次最多生成 ${MAX_BATCH_TOTAL} 张，已截取前 ${maxPromptCount} 条提示词`, 'info');
-        return prompts.slice(0, maxPromptCount);
-    }
     return prompts;
 }

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Settings, RefreshCw, Plus, X, Star, Trash2, ChevronDown, ChevronRight, Sparkles, Image as ImageIcon, Wand2, ImagePlus, FolderOpen, History } from 'lucide-react';
-import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig, IterationContext, IterationMode } from '../types';
+import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, IterationAssistantConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig, IterationContext, IterationMode } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
 import { useToast } from './Toast';
@@ -21,7 +21,7 @@ import {
   getActiveProviderId as getActiveProviderIdFromDb,
   getDraft as getDraftFromDb,
   getPromptOptimizerConfig,
-  setPromptOptimizerConfig,
+  getIterationAssistantConfig,
   getProviders as getProvidersFromDb,
   getRecentImagesByScope,
   setActiveProviderId as setActiveProviderIdInDb,
@@ -30,7 +30,7 @@ import {
 } from '../services/db';
 import { compressImage } from '../services/shared';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
-import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
+import { parsePromptsToBatch } from '../services/batch';
 
 interface KiePageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
@@ -198,16 +198,22 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
+  // 独立的迭代助手配置
+  const [iterationConfig, setIterationConfig] = useState<IterationAssistantConfig | null>(null);
 
-  // 初始化加载独立优化器配置
+  // 初始化加载配置（优化器 + 迭代助手并行）
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const config = await getPromptOptimizerConfig();
+      const [optConfig, iterConfig] = await Promise.all([
+        getPromptOptimizerConfig(),
+        getIterationAssistantConfig(),
+      ]);
       if (cancelled) return;
-      if (config?.enabled) {
-        setOptimizerConfig(config);
+      if (optConfig?.enabled) {
+        setOptimizerConfig(optConfig);
       }
+      setIterationConfig(iterConfig);
     };
     void load();
     return () => { cancelled = true; };
@@ -216,14 +222,6 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   const handleOptimizerConfigChange = useCallback((config: PromptOptimizerConfig | null) => {
     setOptimizerConfig(config);
   }, []);
-
-  const handleIterateTemplateChange = useCallback((templateId: string) => {
-    if (optimizerConfig) {
-      const newConfig = { ...optimizerConfig, iterateTemplateId: templateId, updatedAt: Date.now() };
-      setOptimizerConfig(newConfig);
-      void setPromptOptimizerConfig(newConfig);
-    }
-  }, [optimizerConfig]);
 
   // Params
   const [params, setParams] = useState<GenerationParams>({
@@ -362,12 +360,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     }
   }, [params, refImages, customModel, settings, scope, activeProviderId, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks]);
 
-  const batchPromptCount = useMemo(() => {
-      const prompts = parsePromptsToBatch(prompt);
-      const safeCountPerPrompt = Math.max(1, Math.min(4, Math.floor(batchConfig.countPerPrompt || 1)));
-      const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
-      return Math.min(prompts.length, maxBatchPromptCount);
-  }, [prompt, batchConfig.countPerPrompt]);
+  const batchPromptCount = useMemo(() => parsePromptsToBatch(prompt).length, [prompt]);
 
   // 应用当前供应商配置 + 加载草稿（每个供应商一份）
   useEffect(() => {
@@ -1303,8 +1296,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
           <IterationAssistant
             currentPrompt={prompt}
             onUseVersion={setPrompt}
-            iterateTemplateId={optimizerConfig?.iterateTemplateId}
-            onTemplateChange={handleIterateTemplateChange}
+            iterateTemplateId={iterationConfig?.templateId}
             iterationMode={iterationMode}
             iterationContext={iterationContext}
             onClearContext={handleClearIterationContext}

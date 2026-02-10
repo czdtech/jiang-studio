@@ -62,12 +62,12 @@ export const PromptOptimizerSettings = ({
       if (cancelled) return;
       if (saved) {
         // 兼容旧配置：如果没有某些字段，添加默认值
-        const normalized = {
-          ...saved,
+        const normalized: PromptOptimizerConfig = {
+          enabled: saved.enabled ?? true,
           mode: saved.mode || 'manual',
           templateId: saved.templateId || 'image-general-optimize',
-          iterateTemplateId: saved.iterateTemplateId || 'image-iterate-general',
-        } as PromptOptimizerConfig;
+          updatedAt: saved.updatedAt || Date.now(),
+        };
         setConfig(normalized);
         // 根据已保存的模板推断分类
         setTemplateCategory(inferCategory(normalized.templateId));
@@ -251,12 +251,12 @@ export const usePromptOptimizerConfig = () => {
       if (cancelled) return;
       if (saved) {
         // 兼容旧配置
-        const normalized = {
-          ...saved,
+        const normalized: PromptOptimizerConfig = {
+          enabled: saved.enabled ?? true,
           mode: saved.mode || 'manual',
           templateId: saved.templateId || 'image-general-optimize',
-          iterateTemplateId: saved.iterateTemplateId || 'image-iterate-general',
-        } as PromptOptimizerConfig;
+          updatedAt: saved.updatedAt || Date.now(),
+        };
         setConfig(normalized);
       }
       setIsLoading(false);

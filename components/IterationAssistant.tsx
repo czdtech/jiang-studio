@@ -34,8 +34,6 @@ interface IterationAssistantProps {
   onUseVersion: (prompt: string) => void;
   /** 迭代模板 ID */
   iterateTemplateId?: string;
-  /** 模板变更回调 */
-  onTemplateChange?: (templateId: string) => void;
   /** 迭代模式 */
   iterationMode?: IterationMode;
   /** 图片上下文（image-context 模式下使用） */
@@ -52,7 +50,6 @@ export const IterationAssistant = ({
   currentPrompt,
   onUseVersion,
   iterateTemplateId = 'image-iterate-general',
-  onTemplateChange: _onTemplateChange,
   iterationMode = 'prompt-only',
   iterationContext,
   onClearContext,

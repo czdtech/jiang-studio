@@ -97,7 +97,12 @@ export interface PromptOptimizerConfig {
   enabled: boolean; // 是否启用优化器
   mode: 'manual' | 'auto'; // 手动模式：点优化按钮触发；自动模式：点生成时自动优化
   templateId: string; // 优化器模板 ID
-  iterateTemplateId: string; // 迭代助手模板 ID
+  updatedAt: number;
+}
+
+/** 迭代助手配置（独立于优化器） */
+export interface IterationAssistantConfig {
+  templateId: string; // 迭代模板 ID
   updatedAt: number;
 }
 

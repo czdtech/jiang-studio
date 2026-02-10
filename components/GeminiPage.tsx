@@ -9,6 +9,7 @@ import {
   ProviderProfile,
   ProviderScope,
   PromptOptimizerConfig,
+  IterationAssistantConfig,
   IterationContext,
   IterationMode,
 } from '../types';
@@ -28,13 +29,13 @@ import {
 } from './uiStyles';
 import {
   getPromptOptimizerConfig,
-  setPromptOptimizerConfig,
+  getIterationAssistantConfig,
   getRecentImagesByScope,
 } from '../services/db';
 import { compressImage } from '../services/shared';
 import { useProviderManagement } from '../hooks/useProviderManagement';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
-import { parsePromptsToBatch, MAX_BATCH_TOTAL } from '../services/batch';
+import { parsePromptsToBatch } from '../services/batch';
 
 interface GeminiPageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
@@ -183,16 +184,22 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
 
   // 独立的 Prompt 优化器配置
   const [optimizerConfig, setOptimizerConfig] = useState<PromptOptimizerConfig | null>(null);
+  // 独立的迭代助手配置
+  const [iterationConfig, setIterationConfig] = useState<IterationAssistantConfig | null>(null);
 
-  // 初始化加载独立优化器配置
+  // 初始化加载配置（优化器 + 迭代助手并行）
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      const config = await getPromptOptimizerConfig();
+      const [optConfig, iterConfig] = await Promise.all([
+        getPromptOptimizerConfig(),
+        getIterationAssistantConfig(),
+      ]);
       if (cancelled) return;
-      if (config?.enabled) {
-        setOptimizerConfig(config);
+      if (optConfig?.enabled) {
+        setOptimizerConfig(optConfig);
       }
+      setIterationConfig(iterConfig);
     };
     void load();
     return () => { cancelled = true; };
@@ -201,14 +208,6 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   const handleOptimizerConfigChange = useCallback((config: PromptOptimizerConfig | null) => {
     setOptimizerConfig(config);
   }, []);
-
-  const handleIterateTemplateChange = useCallback((templateId: string) => {
-    if (optimizerConfig) {
-      const newConfig = { ...optimizerConfig, iterateTemplateId: templateId, updatedAt: Date.now() };
-      setOptimizerConfig(newConfig);
-      void setPromptOptimizerConfig(newConfig);
-    }
-  }, [optimizerConfig]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -372,12 +371,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     }
   }, [params, refImages, settingsApiKey, settingsBaseUrl, scope, activeProviderId, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks]);
 
-  const batchPromptCount = useMemo(() => {
-      const prompts = parsePromptsToBatch(prompt);
-      const safeCountPerPrompt = Math.max(1, Math.min(4, Math.floor(batchConfig.countPerPrompt || 1)));
-      const maxBatchPromptCount = Math.max(1, Math.floor(MAX_BATCH_TOTAL / safeCountPerPrompt));
-      return Math.min(prompts.length, maxBatchPromptCount);
-  }, [prompt, batchConfig.countPerPrompt]);
+  const batchPromptCount = useMemo(() => parsePromptsToBatch(prompt).length, [prompt]);
 
   const handleBatchGenerate = async () => {
     if (generateLockRef.current) return;
@@ -1137,8 +1131,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
           <IterationAssistant
             currentPrompt={prompt}
             onUseVersion={setPrompt}
-            iterateTemplateId={optimizerConfig?.iterateTemplateId}
-            onTemplateChange={handleIterateTemplateChange}
+            iterateTemplateId={iterationConfig?.templateId}
             iterationMode={iterationMode}
             iterationContext={iterationContext}
             onClearContext={handleClearIterationContext}

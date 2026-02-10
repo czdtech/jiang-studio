@@ -13,8 +13,7 @@ import {
     parsePromptsToBatch,
     executeBatch,
     validateBatchParams,
-    MAX_BATCH_COUNT_PER_PROMPT,
-    MAX_BATCH_TOTAL
+    MAX_BATCH_COUNT_PER_PROMPT
 } from '../services/batch';
 import { downloadImagesSequentially } from '../services/download';
 import { optimizeUserPrompt } from '../services/mcp';

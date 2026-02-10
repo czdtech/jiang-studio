@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { X, Download, Edit, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { X, Download, Edit, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { GeneratedImage } from '../types';
 
 interface ImagePreviewModalProps {
@@ -15,6 +15,9 @@ export const ImagePreviewModal = ({
 }: ImagePreviewModalProps) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [resolvedObjectUrl, setResolvedObjectUrl] = useState<string | null>(null);
+  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [promptClamped, setPromptClamped] = useState(false);
+  const promptRef = useRef<HTMLParagraphElement>(null);
   
   // 用于跟踪当前有效的 Blob URL，确保切换图片时不会使用已释放的 URL
   const objectUrlRef = React.useRef<string | null>(null);
@@ -87,6 +90,19 @@ export const ImagePreviewModal = ({
       }
     };
   }, []);
+
+  // 检测提示词是否被截断（需要展开按钮）
+  useEffect(() => {
+    const el = promptRef.current;
+    if (!el) return;
+    // scrollHeight > clientHeight 说明文本溢出了
+    setPromptClamped(el.scrollHeight > el.clientHeight + 1);
+  }, [data, currentIndex, promptExpanded]);
+
+  // 切换图片时重置展开状态
+  useEffect(() => {
+    setPromptExpanded(false);
+  }, [currentIndex]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -181,7 +197,26 @@ export const ImagePreviewModal = ({
 
        {/* Bottom Info Area */}
        <div className="shrink-0 p-6 bg-dark-surface/60 backdrop-blur-sm border-t border-dark-border">
-          <p className="text-white text-base md:text-lg max-w-4xl mx-auto text-center">{currentImage.prompt}</p>
+          <p
+            ref={promptRef}
+            className={`text-white text-base md:text-lg max-w-4xl mx-auto text-center transition-all duration-200 ${
+              promptExpanded ? '' : 'line-clamp-3'
+            }`}
+          >
+            {currentImage.prompt}
+          </p>
+          {(promptClamped || promptExpanded) && (
+            <button
+              onClick={() => setPromptExpanded(prev => !prev)}
+              className="mt-1.5 mx-auto flex items-center gap-1 text-xs text-gray-400 hover:text-banana-400 transition-colors"
+            >
+              {promptExpanded ? (
+                <><ChevronUp className="w-3.5 h-3.5" />收起</>
+              ) : (
+                <><ChevronDown className="w-3.5 h-3.5" />展开全部</>
+              )}
+            </button>
+          )}
           <div className="mt-3 flex flex-wrap items-center justify-center gap-3 text-xs text-gray-400">
             <span>模型：{currentImage.model || '-'}</span>
             <span>尺寸：{currentImage.params.imageSize || 'STD'}</span>

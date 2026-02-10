@@ -188,6 +188,15 @@ const buildKieInput = (
 ): Record<string, unknown> => {
   const modelLower = model.toLowerCase();
   
+  // Nano Banana (标准) 和 Edit 使用 'jpeg'，Pro 使用 'jpg'
+  // 统一将前端的 'jpg' 根据模型映射为正确的 API 值
+  const isProModel = modelLower.includes('nano-banana-pro') || modelLower.includes('nanobananapro');
+  const formatForApi = (fmt: string | undefined): string => {
+    const f = fmt || 'png';
+    if (f === 'jpg' && !isProModel) return 'jpeg'; // 标准/Edit 模型 API 要求 'jpeg'
+    return f; // Pro 模型直接用 'jpg'，png 所有模型通用
+  };
+  
   // Imagen 4 系列
   if (modelLower.includes('imagen-4') || modelLower.includes('imagen4')) {
     const input: Record<string, unknown> = {
@@ -207,17 +216,17 @@ const buildKieInput = (
       prompt: params.prompt,
       image_urls: imageInputUrls.slice(0, 10), // 最多 10 张
       image_size: params.aspectRatio, // Nano Banana Edit 使用 image_size 存比例
-      output_format: params.outputFormat || 'png',
+      output_format: formatForApi(params.outputFormat),
     };
   }
   
   // Nano Banana Pro - 高质量模型
-  if (modelLower.includes('nano-banana-pro') || modelLower.includes('nanobananapro')) {
+  if (isProModel) {
     const input: Record<string, unknown> = {
       prompt: params.prompt,
       aspect_ratio: params.aspectRatio,
       resolution: params.imageSize, // 1K/2K/4K
-      output_format: params.outputFormat || 'png',
+      output_format: formatForApi(params.outputFormat),
     };
     if (imageInputUrls.length > 0) {
       input.image_input = imageInputUrls.slice(0, 8); // 最多 8 张
@@ -229,7 +238,7 @@ const buildKieInput = (
   const input: Record<string, unknown> = {
     prompt: params.prompt,
     image_size: params.aspectRatio, // Nano Banana 使用 image_size 存比例
-    output_format: params.outputFormat || 'png',
+    output_format: formatForApi(params.outputFormat),
   };
   // 注意：标准 Nano Banana 不支持 image_input 参数
   return input;
