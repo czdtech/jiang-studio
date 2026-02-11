@@ -34,6 +34,7 @@ import { parsePromptsToBatch } from '../services/batch';
 
 interface KiePageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
+  ensureGalleryDir: () => Promise<boolean>;
   onImageClick: (images: GeneratedImage[], index: number) => void;
   onEdit: (image: GeneratedImage) => void;
 }
@@ -55,7 +56,7 @@ const createDefaultProvider = (): ProviderProfile => {
 
 const MAX_REF_IMAGES = 8;
 
-export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
+export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: KiePageProps) => {
   const { showToast } = useToast();
   const scope: ProviderScope = 'kie';
 
@@ -281,6 +282,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
   } = useBatchGenerator({
     showToast,
     saveImage,
+    ensureGalleryDir,
     scope,
     activeProviderId
   });
@@ -569,6 +571,11 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
+
+    // Gallery guard: 确保图库目录已设置
+    const galleryOk = await ensureGalleryDir();
+    if (!galleryOk) return;
+
     if (!settings.apiKey) {
       showToast('请先填写 API Key', 'error');
       return;
@@ -997,6 +1004,7 @@ export const KiePage = ({ saveImage, onImageClick, onEdit }: KiePageProps) => {
                     <BatchImageGrid
                       tasks={batchTasks}
                       countPerPrompt={safePreviewCountPerPrompt}
+                      params={params}
                       selectedImageIds={selectedBatchImageIds}
                       onToggleSelect={(id) => {
                         setSelectedBatchImageIds((prev) =>

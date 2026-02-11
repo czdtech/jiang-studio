@@ -1520,7 +1520,7 @@ a:focus-visible,
 .aurora-batch-card-pending {
   background: var(--color-dark-surface);
   border-color: var(--color-dark-border);
-  aspect-ratio: 1 / 1;
+  /* aspect-ratio 由内联 style 动态控制 */
 }
 
 .aurora-batch-card-error {
@@ -1530,7 +1530,25 @@ a:focus-visible,
   text-align: center;
   padding: 12px;
   flex-direction: column;
-  aspect-ratio: 1 / 1;
+  /* aspect-ratio 由内联 style 动态控制 */
+}
+
+/* Portfolio masonry responsive columns */
+.aurora-portfolio-masonry {
+  column-count: 2;
+  column-gap: 24px;
+}
+
+@media (min-width: 768px) {
+  .aurora-portfolio-masonry {
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1024px) {
+  .aurora-portfolio-masonry {
+    column-count: 4;
+  }
 }
 
 /* Result hover info popover */

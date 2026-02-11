@@ -39,6 +39,7 @@ import { parsePromptsToBatch } from '../services/batch';
 
 interface OpenAIPageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
+  ensureGalleryDir: () => Promise<boolean>;
   onImageClick: (images: GeneratedImage[], index: number) => void;
   onEdit: (image: GeneratedImage) => void;
   variant?: 'third_party' | 'antigravity_tools';
@@ -118,7 +119,7 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
 
 const MAX_REF_IMAGES = 8;
 
-export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_party' }: OpenAIPageProps) => {
+export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, variant = 'third_party' }: OpenAIPageProps) => {
   const { showToast } = useToast();
   const scope: ProviderScope = variant === 'antigravity_tools' ? 'antigravity_tools' : 'openai_proxy';
   const isAntigravityTools = variant === 'antigravity_tools';
@@ -375,6 +376,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
   } = useBatchGenerator({
       showToast,
       saveImage,
+      ensureGalleryDir,
       scope,
       activeProviderId
   });
@@ -635,6 +637,10 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
+
+    // Gallery guard: 确保图库目录已设置
+    const galleryOk = await ensureGalleryDir();
+    if (!galleryOk) return;
 
     if (isBatchMode) {
         clearBatch();
@@ -1074,6 +1080,7 @@ export const OpenAIPage = ({ saveImage, onImageClick, onEdit, variant = 'third_p
                     <BatchImageGrid
                       tasks={batchTasks}
                       countPerPrompt={safePreviewCountPerPrompt}
+                      params={params}
                       selectedImageIds={selectedBatchImageIds}
                       onToggleSelect={(id) => {
                         setSelectedBatchImageIds((prev) =>

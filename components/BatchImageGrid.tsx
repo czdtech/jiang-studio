@@ -1,11 +1,13 @@
 import React, { useMemo } from 'react';
 import { AlertTriangle, Download, Edit, Sparkles, Check } from 'lucide-react';
-import { BatchTask, GeneratedImage } from '../types';
+import { BatchTask, GeneratedImage, GenerationParams } from '../types';
 import { ImageInfoPopover } from './ImageInfoPopover';
+import { getAspectRatioCSS } from '../utils/aspectRatio';
 
 interface BatchImageGridProps {
   tasks: BatchTask[];
   countPerPrompt: number;
+  params: GenerationParams;
   selectedImageIds: string[];
   onToggleSelect: (imageId: string) => void;
   onImageClick: (images: GeneratedImage[], index: number) => void;
@@ -17,6 +19,7 @@ interface BatchImageGridProps {
 export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
   tasks,
   countPerPrompt,
+  params,
   selectedImageIds,
   onToggleSelect,
   onImageClick,
@@ -25,6 +28,7 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
 }) => {
   const columns = Math.min(4, Math.max(1, countPerPrompt));
   const gap = 12;
+  const placeholderAspectRatio = getAspectRatioCSS(params.aspectRatio) || '1 / 1';
   // 整行居中：36px(角标) + 12px(行gap) + 图片区域宽度
   // 以 8 列为基准计算宽度，使图片保持紧凑
   // 图片列宽 = (父容器宽 - 48px行开销 - 7*12px列间距) / 8 = (100% - 132px) / 8
@@ -143,13 +147,21 @@ export const BatchImageGrid: React.FC<BatchImageGridProps> = ({
 
               {Array.from({ length: placeholders }).map((_, idx) =>
                 showError ? (
-                  <div key={`error-${idx}`} className="aurora-batch-card aurora-batch-card-error">
+                  <div
+                    key={`error-${idx}`}
+                    className="aurora-batch-card aurora-batch-card-error"
+                    style={{ aspectRatio: placeholderAspectRatio }}
+                  >
                     <AlertTriangle className="w-8 h-8 text-red-400/80 mb-2" />
                     <p className="text-xs font-semibold text-red-200">生成失败</p>
                     <p className="text-[10px] text-red-200/70 mt-1 line-clamp-3">{errorMessage}</p>
                   </div>
                 ) : (
-                  <div key={`pending-${idx}`} className="aurora-batch-card aurora-batch-card-pending">
+                  <div
+                    key={`pending-${idx}`}
+                    className="aurora-batch-card aurora-batch-card-pending"
+                    style={{ aspectRatio: placeholderAspectRatio }}
+                  >
                     <Sparkles className="text-banana-500/30 w-10 h-10 animate-pulse" />
                   </div>
                 )

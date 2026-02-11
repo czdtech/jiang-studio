@@ -6,11 +6,14 @@ import {
   cleanBase64,
   createGeneratedImage,
   runWithConcurrency,
-  aggregateErrors,
   urlToBase64,
   compressImage,
   createAbortError,
   throwIfAborted,
+  createTimeoutSignal,
+  isRetriableError,
+  MAX_CONCURRENCY,
+  REQUEST_TIMEOUT_MS,
   OpenAIResponse,
   OpenAIChoice,
   OpenAIContentPart,
@@ -19,34 +22,7 @@ import {
   InternalGeneratedImage,
 } from './shared';
 import { debugLog } from './logger';
-
-const MAX_CONCURRENCY = 2;
-const REQUEST_TIMEOUT_MS = 120000;
-
-const createTimeoutSignal = (signal?: AbortSignal, timeoutMs?: number) => {
-  if (!timeoutMs || timeoutMs <= 0) {
-    return { signal, cleanup: () => {}, didTimeout: () => false };
-  }
-
-  let timedOut = false;
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  if (signal) signal.addEventListener('abort', onAbort, { once: true });
-
-  const timer = setTimeout(() => {
-    timedOut = true;
-    controller.abort();
-  }, timeoutMs);
-
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timer);
-      if (signal) signal.removeEventListener('abort', onAbort);
-    },
-    didTimeout: () => timedOut,
-  };
-};
+import { parseAspectRatio } from '../utils/aspectRatio';
 
 /** 从文本中提取图像 data URL/链接 */
 const extractImageFromText = (text: string): string | null => {
@@ -109,12 +85,6 @@ const buildMessageContent = (params: GenerationParams): OpenAIContentPart[] => {
   return content;
 };
 
-const parseAspectRatioValue = (ratio?: string): number | null => {
-  if (!ratio || ratio === 'auto') return null;
-  const parts = ratio.split(':').map((p) => Number(p));
-  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)) || parts[1] === 0) return null;
-  return parts[0] / parts[1];
-};
 
 /** 比例 × 分辨率 → 精确像素尺寸（兼容 Antigravity / OpenAI 兼容中转的 size 参数） */
 const RATIO_SIZE_MAP: Record<string, Record<string, string>> = {
@@ -139,7 +109,7 @@ const mapOpenAIImageSize = (imageSize?: string, aspectRatio?: string): string | 
   }
 
   // 回退：按方向粗略估算
-  const ratio = parseAspectRatioValue(aspectRatio);
+  const ratio = parseAspectRatio(aspectRatio);
   const isLandscape = ratio !== null && ratio > 1.05;
   const isPortrait = ratio !== null && ratio < 0.95;
 
@@ -956,15 +926,6 @@ export const generateImages = async (
   const imageConfigOverride = options?.imageConfig;
   const formatError = (e: unknown): string => (e instanceof Error ? e.message : String(e));
   const maxAttemptsPerImage = 2; // 失败后再重试 1 次
-  const isRetriableError = (message: string): boolean => {
-    if (signal?.aborted) return false;
-    const m = message.match(/API error (\d{3})/);
-    if (!m) return true;
-    const status = Number(m[1]);
-    // 4xx 基本都是请求/鉴权问题（除了 429），重试意义不大，还会刷屏
-    if (status >= 400 && status < 500 && status !== 429) return false;
-    return true;
-  };
 
   const tasks = Array.from({ length: params.count }, (_, index) => async () => {
     if (signal?.aborted) {
@@ -982,7 +943,7 @@ export const generateImages = async (
         if ((e as any)?.name === 'AbortError' || signal?.aborted) {
           return { index, outcome: { ok: false, error: '已停止' } as const };
         }
-        if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr)) {
+        if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr, signal?.aborted)) {
           const is429 = /API error 429/.test(lastErr);
           await new Promise((r) => setTimeout(r, is429 ? 3000 : 300));
         } else {

@@ -6,13 +6,16 @@ import {
   createAbortError,
   createGeneratedImage,
   runWithConcurrency,
+  createTimeoutSignal,
+  isRetriableError,
+  MAX_CONCURRENCY,
+  REQUEST_TIMEOUT_MS,
   throwIfAborted,
   urlToBase64,
   InternalGeneratedImage,
 } from './shared';
 import { ensureImageUrl } from './kieUpload';
 
-const MAX_CONCURRENCY = 2;
 const DEFAULT_POLL_INTERVAL_MS = 1500;
 
 export type ImageGenerationOutcome =
@@ -265,19 +268,29 @@ const generateSingle = async (
   settings: KieSettings,
   options?: { signal?: AbortSignal; imageInputUrls?: string[] }
 ): Promise<GeneratedImage> => {
-  const signal = options?.signal;
+  const outerSignal = options?.signal;
   const model = String(params.model || '').trim();
   if (!model) throw new Error('模型名为空');
 
-  const imageInputUrls = options?.imageInputUrls
-    ? await resolveImageInputUrls(options.imageInputUrls, settings.apiKey, signal)
-    : await resolveImageInputUrls(params.referenceImages || [], settings.apiKey, signal);
+  // 超时覆盖整个 createTask + 轮询周期
+  const { signal, cleanup, didTimeout } = createTimeoutSignal(outerSignal, REQUEST_TIMEOUT_MS);
 
-  const taskId = await createTask(settings, model, buildKieInput(params, imageInputUrls, model), signal);
-  const urls = await waitForResultUrls(settings, taskId, { signal });
+  try {
+    const imageInputUrls = options?.imageInputUrls
+      ? await resolveImageInputUrls(options.imageInputUrls, settings.apiKey, signal)
+      : await resolveImageInputUrls(params.referenceImages || [], settings.apiKey, signal);
 
-  const img = createGeneratedImage(urls[0]!, params, true);
-  return finalizeImage(img, signal);
+    const taskId = await createTask(settings, model, buildKieInput(params, imageInputUrls, model), signal);
+    const urls = await waitForResultUrls(settings, taskId, { signal });
+
+    const img = createGeneratedImage(urls[0]!, params, true);
+    return finalizeImage(img, signal);
+  } catch (e) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw e;
+  } finally {
+    cleanup();
+  }
 };
 
 export const generateImages = async (
@@ -287,6 +300,7 @@ export const generateImages = async (
 ): Promise<ImageGenerationOutcome[]> => {
   const signal = options?.signal;
   const formatError = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+  const maxAttemptsPerImage = 2; // 失败后再重试 1 次
 
   // refImages 上传一次，复用给并发任务，避免每张图重复上传
   const raw = options?.imageInputUrls ?? params.referenceImages ?? [];
@@ -299,15 +313,30 @@ export const generateImages = async (
       return { index, outcome: { ok: false, error: '已停止' } as const };
     }
 
-    try {
-      const image = await generateSingle(params, settings, perTaskOptions);
-      return { index, outcome: { ok: true, image } as const };
-    } catch (e) {
-      if ((e as any)?.name === 'AbortError' || signal?.aborted) {
-        return { index, outcome: { ok: false, error: '已停止' } as const };
+    let lastErr: string | null = null;
+    for (let attempt = 0; attempt < maxAttemptsPerImage; attempt++) {
+      try {
+        if (signal?.aborted) throw createAbortError();
+        const image = await generateSingle(params, settings, perTaskOptions);
+        return { index, outcome: { ok: true, image } as const };
+      } catch (e) {
+        lastErr = formatError(e);
+        if ((e as any)?.name === 'AbortError' || signal?.aborted) {
+          return { index, outcome: { ok: false, error: '已停止' } as const };
+        }
+        if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr, signal?.aborted)) {
+          const is429 = /\b429\b/.test(lastErr);
+          await new Promise((r) => setTimeout(r, is429 ? 3000 : 300));
+        } else {
+          break;
+        }
       }
-      return { index, outcome: { ok: false, error: formatError(e) } as const };
     }
+
+    return {
+      index,
+      outcome: { ok: false, error: lastErr || 'Unknown error' } as const,
+    };
   });
 
   const results = await runWithConcurrency(tasks, MAX_CONCURRENCY, signal);
@@ -337,34 +366,43 @@ export const editImage = async (
   prevParams?: GenerationParams,
   options?: { signal?: AbortSignal; imageInputUrls?: string[] }
 ): Promise<GeneratedImage> => {
-  const signal = options?.signal;
-
+  const outerSignal = options?.signal;
   const aspectRatio = prevParams?.aspectRatio || '1:1';
   const imageSize = prevParams?.imageSize || '1K';
 
-  const sourceUrl = await ensureImageUrl(sourceImageUrlOrDataUrl, { signal, apiKey: settings.apiKey });
-  const extra = await resolveImageInputUrls(options?.imageInputUrls || [], settings.apiKey, signal);
-  const imageInputUrls = [sourceUrl, ...extra].slice(0, 8);
+  // 超时覆盖整个编辑流程（上传 + createTask + 轮询）
+  const { signal, cleanup, didTimeout } = createTimeoutSignal(outerSignal, REQUEST_TIMEOUT_MS);
 
-  const editParams: GenerationParams = {
-    prompt: instruction,
-    aspectRatio,
-    imageSize,
-    outputFormat: prevParams?.outputFormat,
-    count: 1,
-    model: model as ModelType,
-  };
+  try {
+    const sourceUrl = await ensureImageUrl(sourceImageUrlOrDataUrl, { signal, apiKey: settings.apiKey });
+    const extra = await resolveImageInputUrls(options?.imageInputUrls || [], settings.apiKey, signal);
+    const imageInputUrls = [sourceUrl, ...extra].slice(0, 8);
 
-  const taskId = await createTask(
-    settings,
-    model,
-    buildKieInput(editParams, imageInputUrls, model),
-    signal
-  );
+    const editParams: GenerationParams = {
+      prompt: instruction,
+      aspectRatio,
+      imageSize,
+      outputFormat: prevParams?.outputFormat,
+      count: 1,
+      model: model as ModelType,
+    };
 
-  const urls = await waitForResultUrls(settings, taskId, { signal });
-  const img = createGeneratedImage(urls[0]!, editParams, true);
-  return finalizeImage(img, signal);
+    const taskId = await createTask(
+      settings,
+      model,
+      buildKieInput(editParams, imageInputUrls, model),
+      signal
+    );
+
+    const urls = await waitForResultUrls(settings, taskId, { signal });
+    const img = createGeneratedImage(urls[0]!, editParams, true);
+    return finalizeImage(img, signal);
+  } catch (e) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw e;
+  } finally {
+    cleanup();
+  }
 };
 
 /** 优化 Prompt（Kie AI） */

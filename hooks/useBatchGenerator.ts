@@ -21,6 +21,7 @@ import { optimizeUserPrompt } from '../services/mcp';
 interface UseBatchGeneratorProps {
     showToast: (msg: string, type: 'info' | 'error' | 'success') => void;
     saveImage: (image: GeneratedImage) => Promise<void>;
+    ensureGalleryDir: () => Promise<boolean>;
     scope: ProviderScope;
     activeProviderId: string;
 }
@@ -56,6 +57,7 @@ interface UseBatchGeneratorResult {
 export const useBatchGenerator = ({
     showToast,
     saveImage,
+    ensureGalleryDir,
     scope,
     activeProviderId
 }: UseBatchGeneratorProps): UseBatchGeneratorResult => {
@@ -86,6 +88,10 @@ export const useBatchGenerator = ({
         optimizerConfig: PromptOptimizerConfig | null
     ) => {
         if (isGenerating) return;
+
+        // Gallery guard: 确保图库目录已设置
+        const galleryOk = await ensureGalleryDir();
+        if (!galleryOk) return;
 
         let prompts = parsePromptsToBatch(prompt);
         if (prompts.length === 0) return;
@@ -175,7 +181,7 @@ export const useBatchGenerator = ({
             setIsGenerating(false);
             batchAbortControllerRef.current = null;
         }
-    }, [isGenerating, batchConfig, scope, activeProviderId, saveImage, showToast]);
+    }, [isGenerating, batchConfig, scope, activeProviderId, saveImage, ensureGalleryDir, showToast]);
 
     const stopBatch = useCallback(() => {
         if (!isGenerating) return;

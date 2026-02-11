@@ -39,6 +39,7 @@ import { parsePromptsToBatch } from '../services/batch';
 
 interface GeminiPageProps {
   saveImage: (image: GeneratedImage) => Promise<void>;
+  ensureGalleryDir: () => Promise<boolean>;
   onImageClick: (images: GeneratedImage[], index: number) => void;
   onEdit: (image: GeneratedImage) => void;
 }
@@ -66,7 +67,7 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
   };
 };
 
-export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps) => {
+export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: GeminiPageProps) => {
   const { showToast } = useToast();
   const scope: ProviderScope = 'gemini';
 
@@ -285,6 +286,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
   } = useBatchGenerator({
     showToast,
     saveImage,
+    ensureGalleryDir,
     scope,
     activeProviderId
   });
@@ -420,6 +422,10 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
     if (generateLockRef.current) return;
     if (isGenerating) return;
     if (!prompt.trim()) return;
+
+    // Gallery guard: 确保图库目录已设置
+    const galleryOk = await ensureGalleryDir();
+    if (!galleryOk) return;
 
     if (isBatchMode) {
         clearBatch();
@@ -842,6 +848,7 @@ export const GeminiPage = ({ saveImage, onImageClick, onEdit }: GeminiPageProps)
                     <BatchImageGrid
                       tasks={batchTasks}
                       countPerPrompt={safePreviewCountPerPrompt}
+                      params={params}
                       selectedImageIds={selectedBatchImageIds}
                       onToggleSelect={(id) => {
                         setSelectedBatchImageIds((prev) =>

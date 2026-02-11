@@ -75,6 +75,14 @@ export interface InternalGeneratedImage extends GeneratedImage {
   _isUrl?: boolean;
 }
 
+// ============ 并发控制常量 ============
+
+/** 单提示词多图并发数（峰值：MAX_BATCH_CONCURRENCY 8 × 4 = 32 并行请求） */
+export const MAX_CONCURRENCY = 4;
+
+/** 单请求超时（毫秒） */
+export const REQUEST_TIMEOUT_MS = 120_000;
+
 // ============ 工具函数 ============
 
 export const createAbortError = (): Error => {
@@ -236,6 +244,48 @@ export const compressImage = async (
     img.onerror = () => resolve(base64);
     img.src = base64;
   });
+};
+
+/** 创建带超时的 AbortSignal（同时监听外部 signal 和超时） */
+export const createTimeoutSignal = (signal?: AbortSignal, timeoutMs?: number) => {
+  if (!timeoutMs || timeoutMs <= 0) {
+    return { signal, cleanup: () => {}, didTimeout: () => false };
+  }
+
+  let timedOut = false;
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signal) signal.addEventListener('abort', onAbort, { once: true });
+
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+    },
+    didTimeout: () => timedOut,
+  };
+};
+
+/** 判断错误是否值得重试（通用） */
+export const isRetriableError = (message: string, aborted?: boolean): boolean => {
+  if (aborted) return false;
+  // 明确不重试的错误类型
+  if (/aborted|已停止|cancelled/i.test(message)) return false;
+  if (/请求超时|timeout|timed?\s*out/i.test(message)) return false;
+  if (/No image in|empty response|任务失败|failed to produce/i.test(message)) return false;
+  // 从错误消息中提取 HTTP 状态码
+  const m = message.match(/(?:API|Kie API)\s+error\s+(\d{3})/i) || message.match(/\berror\s+(\d{3})\b/i);
+  if (!m) return true; // 未知网络错误等通常值得重试
+  const status = Number(m[1]);
+  // 4xx 基本都是请求/鉴权问题（除了 429 限流），重试意义不大
+  if (status >= 400 && status < 500 && status !== 429) return false;
+  return true;
 };
 
 /** 并发控制池 */

@@ -8,6 +8,7 @@
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { parsePromptsToBatch } from './batch';
 
 function getMcpUrl(): URL {
   // In the browser, call same-origin and let Vite proxy `/mcp` to the VM's prompt-optimizer.
@@ -64,18 +65,32 @@ async function callTool(toolName: string, args: Record<string, unknown>): Promis
 }
 
 /**
- * 优化用户提示词（生图前使用）
- *
- * @param prompt 原始用户提示词
- * @param templateId 可选的模板 ID
- * @returns 优化后的提示词
+ * 优化单条提示词（内部使用）
  */
-export async function optimizeUserPrompt(prompt: string, templateId?: string): Promise<string> {
+async function optimizeOne(prompt: string, templateId?: string): Promise<string> {
   const args: Record<string, unknown> = { prompt };
   if (templateId) {
     args.template = templateId;
   }
   return callTool('optimize-user-prompt', args);
+}
+
+/**
+ * 优化用户提示词（生图前使用）
+ *
+ * 支持多 prompt 输入：当输入包含 `---` 分隔符时，
+ * 会拆分为多条 prompt 分别优化，再用 `\n---\n` 拼接返回。
+ *
+ * @param prompt 原始用户提示词（可含 `---` 分隔的多条）
+ * @param templateId 可选的模板 ID
+ * @returns 优化后的提示词
+ */
+export async function optimizeUserPrompt(prompt: string, templateId?: string): Promise<string> {
+  const prompts = parsePromptsToBatch(prompt);
+  if (prompts.length === 0) return '';
+
+  const results = await Promise.all(prompts.map((p) => optimizeOne(p, templateId)));
+  return results.join('\n---\n');
 }
 
 /**

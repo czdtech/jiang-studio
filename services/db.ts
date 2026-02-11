@@ -291,7 +291,7 @@ const createThumbnail = async (dataUrl: string, maxDim = 512, quality = 0.82): P
 };
 
 export const saveImageToPortfolio = async (image: GeneratedImage): Promise<void> => {
-  // 如果用户已选择“图库目录”，优先落盘；否则回退到 IndexedDB（会占用配额）
+  // 优先落盘；任何情况下 IndexedDB 只存缩略图（避免占用过多配额）
   const galleryDir = await getGalleryDirectoryHandle();
 
   let recordToStore: GeneratedImage = image;
@@ -315,7 +315,9 @@ export const saveImageToPortfolio = async (image: GeneratedImage): Promise<void>
     })();
 
     if (!canWrite) {
-      recordToStore = { ...image, storage: 'idb' };
+      // 无写入权限 — 降级为仅缩略图存 IDB
+      const thumbnail = await createThumbnail(image.base64, 512, 0.82);
+      recordToStore = { ...image, base64: thumbnail, storage: 'idb' };
     } else {
       try {
         const { blob, ext } = dataUrlToBlob(image.base64);
@@ -338,11 +340,16 @@ export const saveImageToPortfolio = async (image: GeneratedImage): Promise<void>
         };
       } catch (err) {
         console.warn('Failed to save image to disk, falling back to IndexedDB:', err);
-        recordToStore = { ...image, storage: 'idb' };
+        const thumbnail = await createThumbnail(image.base64, 512, 0.82);
+        recordToStore = { ...image, base64: thumbnail, storage: 'idb' };
       }
     }
   } else {
-    recordToStore = { ...image, storage: 'idb' };
+    // 安全兜底 — 无图库目录时也只存缩略图
+    const thumbnail = image.base64.startsWith('data:image')
+      ? await createThumbnail(image.base64, 512, 0.82)
+      : image.base64;
+    recordToStore = { ...image, base64: thumbnail, storage: 'idb' };
   }
 
   const db = await openDB();
@@ -425,4 +432,60 @@ export const deleteImageFromPortfolio = async (id: string): Promise<void> => {
     };
     getReq.onerror = () => reject(getReq.error);
   });
+};
+
+// ============ Migration: 压缩存量全尺寸 IDB 图片 ============
+
+const MIGRATION_V3_KEY = 'migration_v3_done';
+
+/**
+ * 一次性迁移：将 IndexedDB 中 storage === 'idb'（或无 storage 字段）的全尺寸图片
+ * 替换为缩略图，避免 IndexedDB 占用过大。
+ * 迁移完成后在 settings 中标记，后续启动不再执行。
+ */
+export const migrateFullSizeImages = async (): Promise<void> => {
+  const done = await getSetting<boolean>(MIGRATION_V3_KEY);
+  if (done) return;
+
+  const db = await openDB();
+  const all = await new Promise<GeneratedImage[]>((resolve, reject) => {
+    const tx = db.transaction(IMAGE_STORE, 'readonly');
+    const req = tx.objectStore(IMAGE_STORE).getAll();
+    req.onsuccess = () => resolve((req.result as GeneratedImage[]) || []);
+    req.onerror = () => reject(req.error);
+  });
+
+  // 筛选需要迁移的记录：storage 为 'idb' 或缺失，且 base64 是完整 data URL（非缩略图）
+  const needsMigration = all.filter(
+    (img) =>
+      (!img.storage || img.storage === 'idb') &&
+      img.base64 &&
+      img.base64.startsWith('data:image') &&
+      img.base64.length > 100_000 // > ~100KB 大概率是全尺寸图
+  );
+
+  if (needsMigration.length > 0) {
+    console.log(`[migration-v3] Compressing ${needsMigration.length} full-size images in IndexedDB...`);
+
+    for (const img of needsMigration) {
+      try {
+        const thumbnail = await createThumbnail(img.base64, 512, 0.82);
+        const updated: GeneratedImage = { ...img, base64: thumbnail, storage: 'idb' };
+
+        const dbW = await openDB();
+        await new Promise<void>((resolve, reject) => {
+          const tx = dbW.transaction(IMAGE_STORE, 'readwrite');
+          const req = tx.objectStore(IMAGE_STORE).put(updated);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+      } catch (e) {
+        console.warn(`[migration-v3] Failed to compress image ${img.id}:`, e);
+      }
+    }
+
+    console.log('[migration-v3] Done.');
+  }
+
+  await setSetting(MIGRATION_V3_KEY, true);
 };

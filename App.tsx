@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { GeneratedImage, GenerationParams, GeminiSettings, ModelType, ProviderProfile, ProviderScope } from './types';
 import { editImage as editGeminiImage } from './services/gemini';
 import { editImage as editOpenAIImage } from './services/openai';
@@ -6,12 +6,13 @@ import { editImage as editKieImage } from './services/kie';
 import { usePortfolio } from './hooks/usePortfolio';
 import { EditorModal } from './components/EditorModal';
 import { ImagePreviewModal } from './components/ImagePreviewModal';
+import { GallerySetupModal } from './components/GallerySetupModal';
 import { PortfolioGrid } from './components/PortfolioGrid';
 import { OpenAIPage } from './components/OpenAIPage';
 import { GeminiPage } from './components/GeminiPage';
 import { KiePage } from './components/KiePage';
 import { Sidebar } from './components/Sidebar';
-import { getActiveProviderId, getProviders } from './services/db';
+import { getActiveProviderId, getGalleryDirectoryHandle, getProviders, migrateFullSizeImages } from './services/db';
 
 type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio';
 
@@ -37,6 +38,48 @@ const App = () => {
   useEffect(() => {
     setMountedTabs((prev) => (prev[activeTab] ? prev : { ...prev, [activeTab]: true }));
   }, [activeTab]);
+
+  // ============ Gallery guard ============
+  const [galleryReady, setGalleryReady] = useState(false);
+  const [showGallerySetup, setShowGallerySetup] = useState(false);
+  const galleryResolveRef = useRef<((ready: boolean) => void) | null>(null);
+
+  // 启动时检查图库目录 + 执行存量迁移
+  useEffect(() => {
+    void (async () => {
+      try {
+        const handle = await getGalleryDirectoryHandle();
+        setGalleryReady(!!handle);
+      } catch { /* ignore */ }
+      // 后台迁移存量全尺寸图片
+      void migrateFullSizeImages().catch((e) => console.warn('[migration]', e));
+    })();
+  }, []);
+
+  /**
+   * 确保图库目录已设置。未设置时弹出引导模态框。
+   * 返回 Promise<boolean>：true = 已就绪，false = 用户取消。
+   */
+  const ensureGalleryDir = useCallback((): Promise<boolean> => {
+    if (galleryReady) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      galleryResolveRef.current = resolve;
+      setShowGallerySetup(true);
+    });
+  }, [galleryReady]);
+
+  const handleGallerySetupSuccess = useCallback(() => {
+    setGalleryReady(true);
+    setShowGallerySetup(false);
+    galleryResolveRef.current?.(true);
+    galleryResolveRef.current = null;
+  }, []);
+
+  const handleGallerySetupClose = useCallback(() => {
+    setShowGallerySetup(false);
+    galleryResolveRef.current?.(false);
+    galleryResolveRef.current = null;
+  }, []);
 
   // Modals
   const [editingImage, setEditingImage] = useState<GeneratedImage | null>(null);
@@ -196,6 +239,7 @@ const App = () => {
             <div className={activeTab === 'gemini' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'gemini'}>
               <GeminiPage
                 saveImage={saveImage}
+                ensureGalleryDir={ensureGalleryDir}
                 onImageClick={(images, index) => setPreviewData({ images, index })}
                 onEdit={setEditingImage}
               />
@@ -207,6 +251,7 @@ const App = () => {
               <OpenAIPage
                 variant="third_party"
                 saveImage={saveImage}
+                ensureGalleryDir={ensureGalleryDir}
                 onImageClick={(images, index) => setPreviewData({ images, index })}
                 onEdit={setEditingImage}
               />
@@ -218,6 +263,7 @@ const App = () => {
               <OpenAIPage
                 variant="antigravity_tools"
                 saveImage={saveImage}
+                ensureGalleryDir={ensureGalleryDir}
                 onImageClick={(images, index) => setPreviewData({ images, index })}
                 onEdit={setEditingImage}
               />
@@ -228,6 +274,7 @@ const App = () => {
             <div className={activeTab === 'kie' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'kie'}>
               <KiePage
                 saveImage={saveImage}
+                ensureGalleryDir={ensureGalleryDir}
                 onImageClick={(images, index) => setPreviewData({ images, index })}
                 onEdit={setEditingImage}
               />
@@ -256,6 +303,12 @@ const App = () => {
       />
 
       <ImagePreviewModal data={previewData} onClose={() => setPreviewData(null)} onEdit={(img) => setEditingImage(img)} />
+
+      <GallerySetupModal
+        isOpen={showGallerySetup}
+        onClose={handleGallerySetupClose}
+        onSuccess={handleGallerySetupSuccess}
+      />
     </div>
   );
 };
