@@ -1536,7 +1536,7 @@ a:focus-visible,
 /* Portfolio masonry responsive columns */
 .aurora-portfolio-masonry {
   column-count: 2;
-  column-gap: 24px;
+  column-gap: 16px;
 }
 
 @media (min-width: 768px) {
@@ -1548,6 +1548,24 @@ a:focus-visible,
 @media (min-width: 1024px) {
   .aurora-portfolio-masonry {
     column-count: 4;
+  }
+}
+
+@media (min-width: 1280px) {
+  .aurora-portfolio-masonry {
+    column-count: 5;
+  }
+}
+
+@media (min-width: 1536px) {
+  .aurora-portfolio-masonry {
+    column-count: 6;
+  }
+}
+
+@media (min-width: 1920px) {
+  .aurora-portfolio-masonry {
+    column-count: 7;
   }
 }
 

@@ -74,7 +74,7 @@ const PortfolioImageCard: React.FC<PortfolioImageCardProps> = ({
       role="button"
       tabIndex={0}
       className="bg-dark-surface/60 backdrop-blur-sm rounded-xl overflow-hidden border border-dark-border hover:border-banana-500/50 transition-all duration-200 group cursor-pointer break-inside-avoid"
-      style={{ marginBottom: '24px' }}
+      style={{ marginBottom: '16px' }}
       onClick={() => onImageClick(sortedImages, idx)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
@@ -298,29 +298,36 @@ export const PortfolioGrid = ({
           </div>
 
           {galleryDirName ? (
-            <div className="flex items-center gap-2 bg-dark-surface border border-dark-border rounded-lg px-3 py-2">
-              <FolderOpen className="w-4 h-4 text-gray-400" />
-              <span className="text-xs text-gray-300 max-w-[240px] truncate">{galleryDirName}</span>
+            <div className="flex items-center gap-1">
+              {/* 点击可重新选择目录 */}
+              <button
+                onClick={handlePickGalleryDir}
+                className="flex items-center gap-2 bg-dark-surface border border-dark-border rounded-lg px-3 py-2 text-gray-300 hover:border-banana-500/60 hover:text-white transition-colors cursor-pointer"
+                title={`当前图库目录：${galleryDirName}\n点击更换目录`}
+              >
+                <FolderOpen className="w-4 h-4 text-banana-500/70" />
+                <span className="text-xs max-w-[240px] truncate">{galleryDirName}</span>
+              </button>
 
               {gallerySupported && galleryPermission !== 'granted' && (
                 <button
                   onClick={handleRequestPermission}
                   disabled={isRequestingPermission}
-                  className="flex items-center gap-1 px-2 py-1 rounded border border-banana-500/40 text-banana-300 hover:border-banana-500/70 hover:text-banana-200 text-[11px] disabled:opacity-60"
+                  className="flex items-center gap-1 px-2 py-2 rounded-lg border border-banana-500/40 text-banana-300 hover:border-banana-500/70 hover:text-banana-200 text-[11px] disabled:opacity-60"
                   title="重新授权写入权限（需要一次点击）"
                 >
                   <ShieldAlert className="w-3.5 h-3.5" />
-                  {isRequestingPermission ? '授权中…' : '重新授权'}
+                  {isRequestingPermission ? '授权中…' : '授权'}
                 </button>
               )}
 
               <button
                 onClick={handleClearGalleryDir}
                 aria-label="清除图库目录"
-                className="p-1 rounded hover:bg-dark-border text-gray-400 hover:text-white"
+                className="p-1.5 rounded-lg hover:bg-dark-border text-gray-500 hover:text-white transition-colors"
                 title="清除图库目录"
               >
-                <XIcon className="w-4 h-4" />
+                <XIcon className="w-3.5 h-3.5" />
               </button>
             </div>
           ) : (
