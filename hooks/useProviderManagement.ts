@@ -9,6 +9,7 @@ import {
   upsertDraft as upsertDraftInDb,
   upsertProvider as upsertProviderInDb,
 } from '../services/db';
+import { getUniqueProviderName } from '../services/shared';
 import { GenerationParams, ProviderDraft, ProviderProfile, ProviderScope } from '../types';
 
 interface UseProviderManagementProps {
@@ -158,8 +159,19 @@ export function useProviderManagement({
     if (!activeProvider) return;
     if (isHydratingRef.current) return;
 
-    // Base URL default handling depends on scope, but usually handled by UI placeholder or createDefault.
-    // Here we save exactly what is in state.
+    // 名称唯一性校验：仅在名称变化时检查
+    const trimmedName = providerName.trim();
+    const nameChanged = !!trimmedName && trimmedName !== activeProvider.name.trim();
+    if (nameChanged) {
+      const nameConflict = providers.some(
+        (p) => p.id !== activeProvider.id && p.name.trim() === trimmedName
+      );
+      if (nameConflict) {
+        showToast('供应商名称已存在', 'error');
+        setProviderName(activeProvider.name);
+        return;
+      }
+    }
 
     const next: ProviderProfile = {
       ...activeProvider,
@@ -232,11 +244,10 @@ export function useProviderManagement({
     const created: ProviderProfile = {
       ...base,
       id: crypto.randomUUID(),
-      name: '新供应商',
+      name: getUniqueProviderName('新供应商', providers),
       favorite: false,
       createdAt: now,
       updatedAt: now,
-      // Ensure specific fields are reset if createDefaultProvider didn't do it
     };
 
     await upsertProviderInDb(created);

@@ -28,7 +28,7 @@ import {
   upsertDraft as upsertDraftInDb,
   upsertProvider as upsertProviderInDb,
 } from '../services/db';
-import { compressImage } from '../services/shared';
+import { compressImage, getUniqueProviderName } from '../services/shared';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
 import { parsePromptsToBatch } from '../services/batch';
 
@@ -426,6 +426,20 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
     if (!activeProvider) return;
     if (isHydratingRef.current) return;
 
+    // 名称唯一性校验：仅在名称变化时检查
+    const trimmedName = providerName.trim();
+    const nameChanged = !!trimmedName && trimmedName !== activeProvider.name.trim();
+    if (nameChanged) {
+      const nameConflict = providers.some(
+        (p) => p.id !== activeProvider.id && p.name.trim() === trimmedName
+      );
+      if (nameConflict) {
+        showToast('供应商名称已存在', 'error');
+        setProviderName(activeProvider.name);
+        return;
+      }
+    }
+
     const next: ProviderProfile = {
       ...activeProvider,
       name: providerName || activeProvider.name,
@@ -479,7 +493,7 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
     const created: ProviderProfile = {
       ...base,
       id: crypto.randomUUID(),
-      name: '新供应商',
+      name: getUniqueProviderName('新供应商', providers),
       favorite: false,
       createdAt: now,
       updatedAt: now,

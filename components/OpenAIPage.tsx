@@ -169,7 +169,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
         } else {
           setRefImages([]);
         }
-        setCustomModel(draft.model || defaultModel || 'gemini-3-pro-image');
+        // Antigravity 固定使用 gemini-3-pro-image，忽略草稿/默认值中的模型
+        setCustomModel(isAntigravityTools ? 'gemini-3-pro-image' : (draft.model || defaultModel || 'gemini-3-pro-image'));
       } else {
         setPrompt('');
         setRefImages([]);
@@ -180,9 +181,10 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
           count: 1,
           model: ModelType.CUSTOM,
         });
-        setCustomModel(defaultModel || 'gemini-3-pro-image');
+        setCustomModel(isAntigravityTools ? 'gemini-3-pro-image' : (defaultModel || 'gemini-3-pro-image'));
       }
-    }, []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isAntigravityTools]),
     draftState: {
       prompt,
       params,
@@ -486,6 +488,14 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
     }
   }, [activeProvider?.id, activeProvider?.modelsCache]);
 
+  // 第三方模式：若当前 customModel 不在筛选后的模型列表中，自动回退到首个可用模型
+  useEffect(() => {
+    if (isAntigravityTools) return;
+    if (availableImageModels.length === 0) return;
+    if (availableImageModels.includes(customModel)) return;
+    setCustomModel(availableImageModels[0]);
+  }, [availableImageModels, customModel, isAntigravityTools]);
+
   const handleRefreshModels = async () => {
     if (!activeProvider) {
       return;
@@ -586,6 +596,34 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       setIsLoadingModels(false);
     }
   };
+
+  // 第三方模式自动刷新：填写 API Key + Base URL 后，若无有效缓存则自动拉取模型列表
+  const autoRefreshKeyRef = useRef('');
+  useEffect(() => {
+    if (isAntigravityTools) return;
+    if (!activeProvider) return;
+    if (!baseUrl?.trim()) return;
+    if (requiresApiKey && !apiKey?.trim()) return;
+
+    const key = `${activeProvider.id}:${baseUrl}`;
+
+    // 当前 URL 的缓存仍然有效 → 跳过
+    if (activeProvider.modelsCache?.all?.length && baseUrl === activeProvider.baseUrl) {
+      autoRefreshKeyRef.current = key;
+      return;
+    }
+
+    // 已为此 provider+URL 尝试过 → 跳过
+    if (autoRefreshKeyRef.current === key) return;
+
+    const t = setTimeout(() => {
+      autoRefreshKeyRef.current = key;
+      void handleRefreshModels();
+    }, 1000);
+
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProvider?.id, activeProvider?.modelsCache, activeProvider?.baseUrl, baseUrl, apiKey, requiresApiKey]);
 
   const handleOptimizePrompt = async () => {
     if (!prompt.trim()) return;
@@ -947,14 +985,16 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
                     placeholder={variant === 'antigravity_tools' ? '/antigravity' : 'https://api.openai.com'}
                     className={`flex-1 ${inputBaseStyles}`}
                   />
-                  <button
-                    onClick={() => void handleRefreshModels()}
-                    disabled={isLoadingModels || !baseUrl}
-                    className="h-9 px-2.5 text-xs rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors"
-                    title={modelsHint || '刷新模型列表'}
-                  >
-                    {isLoadingModels ? '...' : '刷新'}
-                  </button>
+                  {!isAntigravityTools && (
+                    <button
+                      onClick={() => void handleRefreshModels()}
+                      disabled={isLoadingModels || !baseUrl}
+                      className="h-9 px-2.5 text-xs rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-text-primary disabled:opacity-50 transition-colors"
+                      title={modelsHint || '刷新模型列表'}
+                    >
+                      {isLoadingModels ? '...' : '刷新'}
+                    </button>
+                  )}
                 </div>
                 {!baseUrl?.trim() && (
                   <p className="text-xs text-warning/80">未填写 Base URL，无法请求模型列表与生成。</p>
@@ -1267,26 +1307,27 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
             <div className="aurora-config-bar">
               <div className="aurora-config-item">
                 <label>模型</label>
-                {availableImageModels.length > 0 ? (
+                {isAntigravityTools ? (
+                  <span className="text-xs text-text-muted truncate" title="gemini-3-pro-image">gemini-3-pro-image</span>
+                ) : availableImageModels.length > 0 ? (
                   <select
                     value={customModel}
                     onChange={(e) => setCustomModel(e.target.value)}
                   >
-                    {!availableImageModels.includes(customModel) && customModel && (
-                      <option value={customModel}>{customModel} (自定义)</option>
-                    )}
                     {availableImageModels.map((id) => (
                       <option key={id} value={id}>{id}</option>
                     ))}
                   </select>
                 ) : (
-                  <input
-                    type="text"
-                    value={customModel}
-                    onChange={(e) => setCustomModel(e.target.value)}
-                    placeholder="输入模型名..."
-                    className="text-xs"
-                  />
+                  <select disabled className="text-xs opacity-60">
+                    <option>
+                      {isLoadingModels
+                        ? '正在加载模型列表...'
+                        : (!baseUrl?.trim() || (requiresApiKey && !apiKey?.trim()))
+                          ? '请先填写 Base URL 和 API Key'
+                          : '暂无可用模型，请点击刷新'}
+                    </option>
+                  </select>
                 )}
               </div>
               <div className="aurora-config-item">

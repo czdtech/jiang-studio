@@ -1,7 +1,7 @@
 /**
  * 共享工具函数和类型定义
  */
-import { GenerationParams, GeneratedImage } from '../types';
+import { GenerationParams, GeneratedImage, ProviderProfile } from '../types';
 import { debugLog } from './logger';
 
 // ============ 类型定义 ============
@@ -108,6 +108,23 @@ export const cleanBase64 = (b64: string): string => {
 /** 生成唯一 ID */
 export const generateId = (): string => {
   return crypto.randomUUID();
+};
+
+/** 为供应商生成唯一名称（同 scope 内不重复） */
+export const getUniqueProviderName = (
+  baseName: string,
+  existingProviders: ProviderProfile[],
+  excludeId?: string
+): string => {
+  const names = new Set(
+    existingProviders
+      .filter((p) => !excludeId || p.id !== excludeId)
+      .map((p) => p.name.trim())
+  );
+  if (!names.has(baseName)) return baseName;
+  let n = 2;
+  while (names.has(`${baseName} (${n})`)) n++;
+  return `${baseName} (${n})`;
 };
 
 /** 创建 GeneratedImage 对象 */
