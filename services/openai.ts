@@ -220,7 +220,10 @@ const callStreamingAPI = async (
       body.response_format = { type: 'image' };
     }
     if (imageConfig.aspectRatio) body.aspect_ratio = imageConfig.aspectRatio;
-    if (imageConfig.imageSize) body.size = imageConfig.imageSize;
+    if (imageConfig.imageSize) {
+      body.size = imageConfig.imageSize;
+      body.imageSize = imageConfig.imageSize;   // Antigravity v4.1.14+: highest priority
+    }
   }
 
   debugLog('Request URL:', url);
@@ -282,6 +285,7 @@ const callImagesAPI = async (
 
   if (imageConfig?.imageSize) {
     body.size = imageConfig.imageSize;
+    body.imageSize = imageConfig.imageSize;     // Antigravity v4.1.14+: highest priority
   }
   if (imageConfig?.aspectRatio) {
     body.aspect_ratio = imageConfig.aspectRatio;
@@ -408,6 +412,7 @@ const callGeminiChatRelayAPI = async (
     ...(imageConfig.aspectRatio && { aspect_ratio: imageConfig.aspectRatio }),
     ...(mappedSize && { size: mappedSize }),
     ...(mappedQuality && { quality: mappedQuality }),
+    ...(imageConfig.imageSize && { imageSize: imageConfig.imageSize }), // Antigravity v4.1.14+: highest priority
     // extra_body：兼容使用 OpenAI Python SDK 的中转
     extra_body: { generationConfig },
   };
