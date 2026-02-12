@@ -16,6 +16,25 @@ import { getActiveProviderId, getGalleryDirectoryHandle, getProviders, migrateFu
 
 type PageTab = 'gemini' | 'openai_proxy' | 'antigravity_tools' | 'kie' | 'portfolio';
 
+const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
+
+function TabPanel({
+  show,
+  isActive,
+  children,
+}: {
+  show: boolean;
+  isActive: boolean;
+  children: React.ReactNode;
+}): React.ReactElement | null {
+  if (!show) return null;
+  return (
+    <div className={isActive ? 'block h-full' : 'hidden'} aria-hidden={!isActive}>
+      {children}
+    </div>
+  );
+}
+
 const normalizeGeminiModel = (value: unknown): ModelType => {
   if (value === ModelType.NANO_BANANA_PRO) return ModelType.NANO_BANANA_PRO;
   if (value === ModelType.NANO_BANANA) return ModelType.NANO_BANANA;
@@ -113,7 +132,6 @@ const App = () => {
   const loadGeminiSettingsForEditing = async (
     preferredProviderId?: string
   ): Promise<{ settings: GeminiSettings; providerId?: string }> => {
-    const DEFAULT_GEMINI_BASE_URL = 'https://generativelanguage.googleapis.com';
     const p = await loadProviderForEditing('gemini', preferredProviderId);
     if (!p) return { settings: { apiKey: '', baseUrl: DEFAULT_GEMINI_BASE_URL } };
     return {
@@ -235,62 +253,52 @@ const App = () => {
       {/* Main Content - Top margin for header */}
       <main className="min-h-screen pb-14 md:pb-0 md:pt-14">
         <div className="h-[calc(100vh-56px)] md:h-[calc(100vh-56px)]">
-          {mountedTabs.gemini && (
-            <div className={activeTab === 'gemini' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'gemini'}>
-              <GeminiPage
-                saveImage={saveImage}
-                ensureGalleryDir={ensureGalleryDir}
-                onImageClick={(images, index) => setPreviewData({ images, index })}
-                onEdit={setEditingImage}
-              />
-            </div>
-          )}
+          <TabPanel show={mountedTabs.gemini} isActive={activeTab === 'gemini'}>
+            <GeminiPage
+              saveImage={saveImage}
+              ensureGalleryDir={ensureGalleryDir}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          </TabPanel>
 
-          {mountedTabs.openai_proxy && (
-            <div className={activeTab === 'openai_proxy' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'openai_proxy'}>
-              <OpenAIPage
-                variant="third_party"
-                saveImage={saveImage}
-                ensureGalleryDir={ensureGalleryDir}
-                onImageClick={(images, index) => setPreviewData({ images, index })}
-                onEdit={setEditingImage}
-              />
-            </div>
-          )}
+          <TabPanel show={mountedTabs.openai_proxy} isActive={activeTab === 'openai_proxy'}>
+            <OpenAIPage
+              variant="third_party"
+              saveImage={saveImage}
+              ensureGalleryDir={ensureGalleryDir}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          </TabPanel>
 
-          {mountedTabs.antigravity_tools && (
-            <div className={activeTab === 'antigravity_tools' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'antigravity_tools'}>
-              <OpenAIPage
-                variant="antigravity_tools"
-                saveImage={saveImage}
-                ensureGalleryDir={ensureGalleryDir}
-                onImageClick={(images, index) => setPreviewData({ images, index })}
-                onEdit={setEditingImage}
-              />
-            </div>
-          )}
+          <TabPanel show={mountedTabs.antigravity_tools} isActive={activeTab === 'antigravity_tools'}>
+            <OpenAIPage
+              variant="antigravity_tools"
+              saveImage={saveImage}
+              ensureGalleryDir={ensureGalleryDir}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          </TabPanel>
 
-          {mountedTabs.kie && (
-            <div className={activeTab === 'kie' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'kie'}>
-              <KiePage
-                saveImage={saveImage}
-                ensureGalleryDir={ensureGalleryDir}
-                onImageClick={(images, index) => setPreviewData({ images, index })}
-                onEdit={setEditingImage}
-              />
-            </div>
-          )}
+          <TabPanel show={mountedTabs.kie} isActive={activeTab === 'kie'}>
+            <KiePage
+              saveImage={saveImage}
+              ensureGalleryDir={ensureGalleryDir}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+            />
+          </TabPanel>
 
-          {mountedTabs.portfolio && (
-            <div className={activeTab === 'portfolio' ? 'block h-full' : 'hidden'} aria-hidden={activeTab !== 'portfolio'}>
-              <PortfolioGrid
-                images={portfolio}
-                onImageClick={(images, index) => setPreviewData({ images, index })}
-                onEdit={setEditingImage}
-                onDelete={deleteImage}
-              />
-            </div>
-          )}
+          <TabPanel show={mountedTabs.portfolio} isActive={activeTab === 'portfolio'}>
+            <PortfolioGrid
+              images={portfolio}
+              onImageClick={(images, index) => setPreviewData({ images, index })}
+              onEdit={setEditingImage}
+              onDelete={deleteImage}
+            />
+          </TabPanel>
         </div>
       </main>
 
@@ -299,7 +307,7 @@ const App = () => {
         isOpen={!!editingImage}
         onClose={() => setEditingImage(null)}
         onEditImage={handleEditImage}
-        onUpdate={handlePortfolioUpdate}
+        onUpdate={saveImage}
       />
 
       <ImagePreviewModal data={previewData} onClose={() => setPreviewData(null)} onEdit={(img) => setEditingImage(img)} />

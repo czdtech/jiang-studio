@@ -117,8 +117,6 @@ export const useBatchGenerator = ({
         setIsGenerating(true);
         setSelectedBatchImageIds([]);
 
-        const safeCountPerPrompt = Math.max(1, Math.min(MAX_BATCH_COUNT_PER_PROMPT, Math.floor(batchConfig.countPerPrompt || 1)));
-
         try {
             const { successCount } = await executeBatch(
                 tasks,
@@ -137,7 +135,7 @@ export const useBatchGenerator = ({
                     const currentParams: GenerationParams = {
                         ...baseParams,
                         prompt: finalPrompt,
-                        count: safeCountPerPrompt
+                        count: safePreviewCountPerPrompt
                     };
 
                     const outcomes = await generateFn(currentParams, controller.signal);

@@ -98,6 +98,18 @@ export const clearGalleryDirectoryHandle = async (): Promise<void> => {
   await deleteSetting(GALLERY_DIR_KEY);
 };
 
+/** 检查图库目录是否有写入权限，无 queryPermission 时假定有权限 */
+async function checkGalleryWritePermission(dir: FileSystemDirectoryHandle): Promise<boolean> {
+  try {
+    const q = (dir as { queryPermission?: (opts: { mode: string }) => Promise<string> }).queryPermission;
+    if (typeof q !== 'function') return true;
+    const state = await q.call(dir, { mode: 'readwrite' });
+    return state === 'granted';
+  } catch {
+    return false;
+  }
+}
+
 // ============ Prompt Optimizer ============
 
 const PROMPT_OPTIMIZER_KEY = 'promptOptimizerConfig';
@@ -244,6 +256,13 @@ export const upsertDraft = async (draft: ProviderDraft): Promise<void> => {
 
 // ============ Portfolio (Images) ============
 
+function mimeToExt(mime: string): string {
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('jpeg') || mime.includes('jpg')) return 'jpg';
+  return 'png';
+}
+
 const dataUrlToBlob = (dataUrl: string): { blob: Blob; mime: string; ext: string } => {
   const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/);
   if (!match) {
@@ -256,10 +275,7 @@ const dataUrlToBlob = (dataUrl: string): { blob: Blob; mime: string; ext: string
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
-  const ext =
-    mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : mime.includes('jpeg') ? 'jpg' : 'png';
-
-  return { blob: new Blob([bytes], { type: mime }), mime, ext };
+  return { blob: new Blob([bytes], { type: mime }), mime, ext: mimeToExt(mime) };
 };
 
 const createThumbnail = async (dataUrl: string, maxDim = 512, quality = 0.82): Promise<string> => {
@@ -303,16 +319,7 @@ export const saveImageToPortfolio = async (image: GeneratedImage): Promise<void>
     // 注意：持久化的目录句柄在新会话里通常是 "prompt" 状态。
     // 如果这里直接触发 getFileHandle 可能会尝试弹权限提示；但在非用户手势下会报
     // "User activation is required..."。因此先 queryPermission，未授权则直接回退到 IDB。
-    const canWrite = await (async () => {
-      try {
-        const q = (galleryDir as any).queryPermission;
-        if (typeof q !== 'function') return true;
-        const state = await q.call(galleryDir, { mode: 'readwrite' });
-        return state === 'granted';
-      } catch {
-        return false;
-      }
-    })();
+    const canWrite = await checkGalleryWritePermission(galleryDir);
 
     if (!canWrite) {
       // 无写入权限 — 降级为仅缩略图存 IDB
@@ -410,16 +417,7 @@ export const deleteImageFromPortfolio = async (id: string): Promise<void> => {
             const dir = await getGalleryDirectoryHandle();
             if (dir && typeof dir.removeEntry === 'function') {
               // 避免在无用户手势下触发权限提示导致的 SecurityError
-              const canWrite = await (async () => {
-                try {
-                  const q = (dir as any).queryPermission;
-                  if (typeof q !== 'function') return true;
-                  const state = await q.call(dir, { mode: 'readwrite' });
-                  return state === 'granted';
-                } catch {
-                  return false;
-                }
-              })();
+              const canWrite = await checkGalleryWritePermission(dir);
               if (!canWrite) return;
               await dir.removeEntry(fileNameToRemove);
             }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, Download, Edit, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
 import { GeneratedImage } from '../types';
 
@@ -20,7 +20,7 @@ export const ImagePreviewModal = ({
   const promptRef = useRef<HTMLParagraphElement>(null);
   
   // 用于跟踪当前有效的 Blob URL，确保切换图片时不会使用已释放的 URL
-  const objectUrlRef = React.useRef<string | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!data) return;
@@ -31,7 +31,7 @@ export const ImagePreviewModal = ({
 
   // 当 currentIndex 改变时，立即清空 resolvedObjectUrl 并释放旧的 Blob URL
   // 这样可以避免在渲染时使用已释放的 URL
-  const handleIndexChange = React.useCallback((newIndex: number | ((prev: number) => number)) => {
+  const handleIndexChange = useCallback((newIndex: number | ((prev: number) => number)) => {
     // 先释放旧的 Blob URL
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);

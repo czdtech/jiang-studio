@@ -32,7 +32,7 @@ import {
   getIterationAssistantConfig,
   getRecentImagesByScope,
 } from '../services/db';
-import { compressImage } from '../services/shared';
+import { compressImage, readFilesAsDataUrls } from '../services/shared';
 import { useProviderManagement } from '../hooks/useProviderManagement';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
 import { parsePromptsToBatch } from '../services/batch';
@@ -375,7 +375,7 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
       setIsGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [params, refImages, settingsApiKey, settingsBaseUrl, scope, activeProviderId, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks]);
+  }, [params, refImages, settingsApiKey, settingsBaseUrl, scope, activeProviderId, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks, refreshHistory]);
 
   const batchPromptCount = useMemo(() => parsePromptsToBatch(prompt).length, [prompt]);
 
@@ -569,26 +569,9 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
-    const files = Array.from(fileList) as File[];
     const maxImages = params.model === ModelType.NANO_BANANA_PRO ? 14 : 4;
-
     try {
-      const rawImages = await Promise.all(
-        files.map(file =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              if (typeof reader.result === 'string') {
-                resolve(reader.result);
-              } else {
-                reject(new Error('Failed to read file'));
-              }
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          })
-        )
-      );
+      const rawImages = await readFilesAsDataUrls(Array.from(fileList));
       const newImages = await Promise.all(rawImages.map(img => compressImage(img)));
       setRefImages((prev) => [...prev, ...newImages].slice(0, maxImages));
     } catch (err) {
@@ -682,6 +665,7 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
                     onClick={() => void handleDeleteProvider()}
                     className="h-8 w-8 flex items-center justify-center rounded-[var(--radius-md)] border border-ash bg-void text-text-muted hover:text-error hover:border-error/50 transition-colors"
                     title="删除供应商"
+                    aria-label="删除供应商"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>

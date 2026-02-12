@@ -92,39 +92,23 @@ export const executeBatch = async (
         });
       } else {
         // 全部失败
-        const isAborted = failErrors.some(e => e === '已停止' || e === '已取消');
-        if (isAborted || checkAborted()) {
-             onTaskUpdate({
-            ...runningTask,
-            status: 'error',
-            error: '已取消',
-            completedAt: Date.now(),
-          });
-        } else {
-            onTaskUpdate({
-            ...runningTask,
-            status: 'error',
-            error: failErrors[0] || '生成失败',
-            completedAt: Date.now(),
-          });
-        }
+        const isAborted = failErrors.some((e) => e === '已停止' || e === '已取消');
+        const errorMsg = isAborted || checkAborted() ? '已取消' : (failErrors[0] || '生成失败');
+        onTaskUpdate({
+          ...runningTask,
+          status: 'error',
+          error: errorMsg,
+          completedAt: Date.now(),
+        });
       }
     } catch (e) {
-      if (checkAborted()) {
-        onTaskUpdate({
-            ...runningTask,
-            status: 'error',
-            error: '已取消',
-            completedAt: Date.now(),
-          });
-      } else {
-        onTaskUpdate({
-            ...runningTask,
-            status: 'error',
-            error: e instanceof Error ? e.message : '未知错误',
-            completedAt: Date.now(),
-          });
-      }
+      const errorMsg = checkAborted() ? '已取消' : (e instanceof Error ? e.message : '未知错误');
+      onTaskUpdate({
+        ...runningTask,
+        status: 'error',
+        error: errorMsg,
+        completedAt: Date.now(),
+      });
     }
   };
 
@@ -136,12 +120,10 @@ export const executeBatch = async (
 };
 
 /**
- * 验证批量参数
+ * 验证批量参数（可扩展校验逻辑）
  */
 export const validateBatchParams = (
-    prompts: string[],
-    _config: BatchConfig,
-    _showToast: (msg: string, type: 'info' | 'error' | 'success') => void
-): string[] => {
-    return prompts;
-}
+  prompts: string[],
+  _config: BatchConfig,
+  _showToast: (msg: string, type: 'info' | 'error' | 'success') => void
+): string[] => prompts;

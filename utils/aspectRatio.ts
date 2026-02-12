@@ -3,20 +3,24 @@
  * 统一处理 "16:9" 等比例字符串的解析、CSS 值生成和图片尺寸测量
  */
 
-/** 解析 "16:9" 为数值比（width/height），auto 或无效返回 null */
-export const parseAspectRatio = (ratio?: string): number | null => {
+/** 解析 "16:9" 为 [w, h]，auto 或无效返回 null */
+function parseRatioParts(ratio?: string): [number, number] | null {
   if (!ratio || ratio === 'auto') return null;
   const parts = ratio.split(':').map((p) => Number(p));
   if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)) || parts[1] === 0) return null;
-  return parts[0] / parts[1];
+  return [parts[0], parts[1]];
+}
+
+/** 解析 "16:9" 为数值比（width/height），auto 或无效返回 null */
+export const parseAspectRatio = (ratio?: string): number | null => {
+  const parts = parseRatioParts(ratio);
+  return parts ? parts[0] / parts[1] : null;
 };
 
 /** 返回 CSS aspect-ratio 值（如 "16 / 9"），auto 或无效返回 null */
 export const getAspectRatioCSS = (ratio?: string): string | null => {
-  if (!ratio || ratio === 'auto') return null;
-  const parts = ratio.split(':').map((p) => Number(p));
-  if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n)) || parts[1] === 0) return null;
-  return `${parts[0]} / ${parts[1]}`;
+  const parts = parseRatioParts(ratio);
+  return parts ? `${parts[0]} / ${parts[1]}` : null;
 };
 
 /** 解码 base64/dataURL 图片并读取真实宽高 */

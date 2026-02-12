@@ -4,6 +4,14 @@ import { GeneratedImage, ModelType, GenerationParams } from '../types';
 import { uploadImageFile, deleteImageFile } from '../services/gemini';
 import { getProviders, getActiveProviderId } from '../services/db';
 import { useToast } from './Toast';
+import type { ProviderProfile } from '../types';
+
+async function getGeminiProvider(image: GeneratedImage): Promise<ProviderProfile | null> {
+  const providers = await getProviders('gemini');
+  const activeId = await getActiveProviderId('gemini');
+  const provider = (providers.find(p => p.id === (image.sourceProviderId || activeId)) || providers[0]) ?? null;
+  return provider;
+}
 
 /** Kie 支持编辑的模型列表 */
 const KIE_EDIT_MODELS = [
@@ -103,13 +111,9 @@ export const EditorModal = ({
     
     const uploadFile = async () => {
       try {
-        // 获取 Gemini 设置
-        const providers = await getProviders('gemini');
-        const activeId = await getActiveProviderId('gemini');
-        const provider = providers.find(p => p.id === (image.sourceProviderId || activeId)) || providers[0];
-        
+        const provider = await getGeminiProvider(image);
         if (!provider?.apiKey) return; // 没有 API Key，跳过上传
-        
+
         const fileInfo = await uploadImageFile(image.base64, {
           apiKey: provider.apiKey,
           baseUrl: provider.baseUrl || 'https://generativelanguage.googleapis.com'
@@ -138,10 +142,7 @@ export const EditorModal = ({
       if (uploadedFileInfo && image?.sourceScope === 'gemini') {
         const cleanup = async () => {
           try {
-            const providers = await getProviders('gemini');
-            const activeId = await getActiveProviderId('gemini');
-            const provider = providers.find(p => p.id === (image.sourceProviderId || activeId)) || providers[0];
-            
+            const provider = await getGeminiProvider(image);
             if (provider?.apiKey) {
               await deleteImageFile(uploadedFileInfo.name, {
                 apiKey: provider.apiKey,

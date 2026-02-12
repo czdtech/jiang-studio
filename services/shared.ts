@@ -1,7 +1,7 @@
 /**
  * 共享工具函数和类型定义
  */
-import { GenerationParams, GeneratedImage, ProviderProfile } from '../types';
+import { GenerationParams, GeneratedImage, ImageGenerationOutcome, ProviderProfile } from '../types';
 import { debugLog } from './logger';
 
 // ============ 类型定义 ============
@@ -68,6 +68,8 @@ export interface OpenAIResponse {
 export interface ImageConfig {
   aspectRatio?: string;
   imageSize?: string;
+  /** 人物生成安全策略（Antigravity / Gemini） */
+  personGeneration?: string;
 }
 
 /** 生成结果（内部使用，可能带 URL 标记） */
@@ -99,6 +101,17 @@ export const createAbortError = (): Error => {
 export const throwIfAborted = (signal?: AbortSignal): void => {
   if (signal?.aborted) throw createAbortError();
 };
+
+export const isAbortError = (e: unknown): boolean =>
+  (e instanceof Error && e.name === 'AbortError') ||
+  (e && typeof e === 'object' && (e as { name?: string }).name === 'AbortError');
+
+/** 将错误转为字符串（供日志/用户展示） */
+export const formatError = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** 拼接 baseUrl 与 path，自动去除 baseUrl 尾部斜杠 */
+export const joinUrl = (baseUrl: string, path: string): string =>
+  `${baseUrl.replace(/\/$/, '')}${path}`;
 
 /** 清理 base64 前缀 */
 export const cleanBase64 = (b64: string): string => {
@@ -154,6 +167,24 @@ export const createGeneratedImage = (
   };
 };
 
+/** 将多个文件读取为 data URL 数组 */
+export function readFilesAsDataUrls(files: File[]): Promise<string[]> {
+  return Promise.all(
+    files.map(
+      (file) =>
+        new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            if (typeof reader.result === 'string') resolve(reader.result);
+            else reject(new Error('Failed to read file'));
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        })
+    )
+  );
+}
+
 /** URL 转 base64 */
 export const urlToBase64 = async (url: string, signal?: AbortSignal): Promise<string> => {
   try {
@@ -170,6 +201,19 @@ export const urlToBase64 = async (url: string, signal?: AbortSignal): Promise<st
     console.error('Failed to convert URL to base64:', e);
     return url;
   }
+};
+
+/** 处理可能是 URL 的图像，转换为 base64 */
+export const finalizeImage = async (
+  image: InternalGeneratedImage,
+  signal?: AbortSignal
+): Promise<GeneratedImage> => {
+  if (image._isUrl || (!image.base64.startsWith('data:') && image.base64.startsWith('http'))) {
+    debugLog('Converting image URL to base64:', image.base64);
+    image.base64 = await urlToBase64(image.base64, signal);
+    delete image._isUrl;
+  }
+  return image;
 };
 
 /** 
@@ -289,6 +333,30 @@ export const createTimeoutSignal = (signal?: AbortSignal, timeoutMs?: number) =>
   };
 };
 
+/** 带超时的 fetch，统一处理 abort 和超时 */
+export const fetchWithTimeout = async (
+  url: string,
+  init: RequestInit,
+  signal?: AbortSignal,
+  timeoutMs?: number
+): Promise<Response> => {
+  throwIfAborted(signal);
+  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, timeoutMs ?? REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { ...init, signal: timedSignal });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API error ${response.status}: ${errorText}`);
+    }
+    return response;
+  } catch (error) {
+    if (didTimeout()) throw new Error('请求超时');
+    throw error;
+  } finally {
+    cleanup();
+  }
+};
+
 /** 判断错误是否值得重试（通用） */
 export const isRetriableError = (message: string, aborted?: boolean): boolean => {
   if (aborted) return false;
@@ -335,6 +403,107 @@ export const runWithConcurrency = async <T>(
 
   await Promise.all(executing);
   return results;
+};
+
+/** 429 限流时延长退避时间 */
+export const is429Error = (message: string): boolean => /\b429\b/.test(message);
+
+/**
+ * 批量图像生成（带重试、并发控制、abort 处理）
+ * 供 gemini、openai、kie 复用
+ */
+export const runBatchImageGeneration = async (
+  count: number,
+  generateOne: (signal?: AbortSignal) => Promise<GeneratedImage>,
+  options?: { signal?: AbortSignal }
+): Promise<ImageGenerationOutcome[]> => {
+  const signal = options?.signal;
+  const maxAttemptsPerImage = 2;
+
+  const tasks = Array.from({ length: count }, (_, index) => async () => {
+    if (signal?.aborted) return { index, outcome: { ok: false, error: '已停止' } as const };
+
+    let lastErr: string | null = null;
+    for (let attempt = 0; attempt < maxAttemptsPerImage; attempt++) {
+      try {
+        if (signal?.aborted) throw createAbortError();
+        const image = await generateOne(signal);
+        return { index, outcome: { ok: true, image } as const };
+      } catch (e) {
+        lastErr = formatError(e);
+        if (isAbortError(e) || signal?.aborted) {
+          return { index, outcome: { ok: false, error: '已停止' } as const };
+        }
+        if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr, signal?.aborted)) {
+          await new Promise((r) => setTimeout(r, is429Error(lastErr) ? 3000 : 300));
+        } else {
+          break;
+        }
+      }
+    }
+    return { index, outcome: { ok: false, error: lastErr || 'Unknown error' } as const };
+  });
+
+  const results = await runWithConcurrency(tasks, MAX_CONCURRENCY, signal);
+  const outcomes: ImageGenerationOutcome[] = Array.from(
+    { length: count },
+    () => ({ ok: false, error: 'Unknown error' }) as const
+  );
+  for (const r of results) outcomes[r.index] = r.outcome;
+  if (signal?.aborted) {
+    for (let i = 0; i < outcomes.length; i++) {
+      const o = outcomes[i];
+      if (o.ok === false && o.error === 'Unknown error') {
+        outcomes[i] = { ok: false, error: '已停止' } as const;
+      }
+    }
+  }
+  return outcomes;
+};
+
+/**
+ * OpenAI 兼容的 Prompt 优化（/v1/chat/completions）
+ * 供 openai、kie 等使用同一优化端点的供应商复用
+ */
+export const optimizePromptOpenAICompat = async (
+  prompt: string,
+  settings: { apiKey: string; baseUrl: string },
+  model: string
+): Promise<string> => {
+  if (!model || !model.trim()) {
+    throw new Error('请先设置提示词优化模型');
+  }
+
+  const url = joinUrl(settings.baseUrl, '/v1/chat/completions');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${settings.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: model.trim(),
+      messages: [
+        {
+          role: 'system',
+          content:
+            'You are an expert prompt engineer for AI image generation. Rewrite prompts to be more descriptive, detailed, and optimized for high-quality generation. Keep the core intent but enhance lighting, texture, and style details. Return ONLY the optimized prompt text.',
+        },
+        { role: 'user', content: `Original Prompt: ${prompt}` },
+      ],
+      temperature: 0.7,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`API error ${response.status}: ${errorText}`);
+  }
+
+  const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+  const optimized = data.choices?.[0]?.message?.content?.trim();
+  if (!optimized) throw new Error('No response from optimization model');
+  return optimized;
 };
 
 /** 聚合错误信息 */

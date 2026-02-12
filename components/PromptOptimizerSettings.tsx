@@ -96,6 +96,8 @@ export const PromptOptimizerSettings = ({
   }
 
   const canOptimize = config.enabled && config.mode === 'manual' && currentPrompt?.trim() && !isOptimizing;
+  const templatesForCategory = templateCategory === 'text2image' ? TEXT2IMAGE_TEMPLATES : IMAGE2IMAGE_TEMPLATES;
+  const currentTemplate = templatesForCategory.find(t => t.value === config.templateId);
 
   return (
     <div className="mt-3 pt-3 border-t border-dark-border">
@@ -197,24 +199,18 @@ export const PromptOptimizerSettings = ({
               </button>
             </div>
             {/* 当前分类的模板列表 */}
-            {(() => {
-              const templates = templateCategory === 'text2image' ? TEXT2IMAGE_TEMPLATES : IMAGE2IMAGE_TEMPLATES;
-              const currentTemplate = templates.find(t => t.value === config.templateId);
-              return (
-                <>
-                  <select
-                    value={currentTemplate ? config.templateId : templates[0].value}
-                    onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
-                    className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
-                  >
-                    {templates.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
-                  {currentTemplate && <p className="text-xs text-gray-500 mt-1">{currentTemplate.desc}</p>}
-                </>
-              );
-            })()}
+            <>
+              <select
+                value={currentTemplate ? config.templateId : templatesForCategory[0].value}
+                onChange={(e) => setConfig({ ...config, templateId: e.target.value, updatedAt: Date.now() })}
+                className="w-full text-sm bg-dark-bg border border-dark-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-banana-500"
+              >
+                {templatesForCategory.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+              {currentTemplate && <p className="text-xs text-gray-500 mt-1">{currentTemplate.desc}</p>}
+            </>
           </div>
 
           {/* 手动模式下的优化按钮 */}

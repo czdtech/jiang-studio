@@ -31,6 +31,8 @@ export interface GenerationParams {
   count: number; // 1-4
   model: ModelType;
   referenceImages?: string[]; // Array of Base64 strings
+  /** 人物生成安全策略（Antigravity / Gemini）：allow_adult = 允许成人人物 */
+  personGeneration?: 'allow_adult' | 'dont_allow';
 }
 
 export interface GeneratedImage {

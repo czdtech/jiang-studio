@@ -1,25 +1,24 @@
 /**
  * OpenAI 兼容 API 实现
  */
-import { GenerationParams, GeneratedImage, ModelType } from '../types';
+import { GenerationParams, GeneratedImage, ImageGenerationOutcome, ModelType } from '../types';
 import {
   cleanBase64,
-  createGeneratedImage,
-  runWithConcurrency,
-  urlToBase64,
   compressImage,
   createAbortError,
-  throwIfAborted,
-  createTimeoutSignal,
-  isRetriableError,
-  MAX_CONCURRENCY,
-  REQUEST_TIMEOUT_MS,
-  OpenAIResponse,
+  createGeneratedImage,
+  fetchWithTimeout,
+  finalizeImage,
+  ImageConfig,
+  joinUrl,
+  InternalGeneratedImage,
   OpenAIChoice,
   OpenAIContentPart,
   OpenAIMessage,
-  ImageConfig,
-  InternalGeneratedImage,
+  OpenAIResponse,
+  REQUEST_TIMEOUT_MS,
+  runBatchImageGeneration,
+  throwIfAborted,
 } from './shared';
 import { debugLog } from './logger';
 import { parseAspectRatio } from '../utils/aspectRatio';
@@ -49,10 +48,6 @@ const extractImageFromText = (text: string): string | null => {
 
   return null;
 };
-
-export type ImageGenerationOutcome =
-  | { ok: true; image: GeneratedImage }
-  | { ok: false; error: string };
 
 /** OpenAI 兼容设置 */
 export interface OpenAISettings {
@@ -85,6 +80,9 @@ const buildMessageContent = (params: GenerationParams): OpenAIContentPart[] => {
   return content;
 };
 
+
+/** imageSize → Antigravity quality 参数映射 */
+const IMAGE_SIZE_TO_QUALITY: Record<string, string> = { '1K': 'standard', '2K': 'medium', '4K': 'hd' };
 
 /** 比例 × 分辨率 → 精确像素尺寸（对齐 Gemini 3 Pro Image 官方分辨率表） */
 const RATIO_SIZE_MAP: Record<string, Record<string, string>> = {
@@ -173,12 +171,30 @@ const buildGeminiContents = (params: GenerationParams): Array<{ role?: string; p
   return [{ role: 'user', parts }];
 };
 
-const buildGeminiImageConfig = (params: GenerationParams): ImageConfig => {
-  const config: ImageConfig = { aspectRatio: params.aspectRatio };
-  if (params.model !== ModelType.NANO_BANANA && params.imageSize) {
-    config.imageSize = params.imageSize;
+/** 从 aspectRatio / imageSize / model / personGeneration 构建 ImageConfig（供生成、编辑等多处复用） */
+const buildImageConfig = (
+  aspectRatio: string,
+  imageSize?: string,
+  model?: string,
+  personGeneration?: string
+): ImageConfig => {
+  const config: ImageConfig = { aspectRatio };
+  if (model !== ModelType.NANO_BANANA && imageSize) {
+    config.imageSize = imageSize;
+  }
+  if (personGeneration) {
+    config.personGeneration = personGeneration;
   }
   return config;
+};
+
+const buildGeminiImageConfig = (params: GenerationParams): ImageConfig => {
+  return buildImageConfig(
+    params.aspectRatio,
+    params.imageSize,
+    params.model,
+    params.personGeneration
+  );
 };
 
 const extractGeminiImageFromResponse = (
@@ -209,8 +225,7 @@ const callStreamingAPI = async (
   signal?: AbortSignal,
   options?: { omitResponseFormat?: boolean }
 ): Promise<OpenAIResponse> => {
-  const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-  const url = `${cleanBaseUrl}/v1/chat/completions`;
+  const url = joinUrl(baseUrl, '/v1/chat/completions');
 
   const body: Record<string, unknown> = {
     model,
@@ -227,36 +242,28 @@ const callStreamingAPI = async (
     if (imageConfig.imageSize) {
       body.size = imageConfig.imageSize;
       body.imageSize = imageConfig.imageSize;   // Antigravity v4.1.14+: highest priority
+      const quality = IMAGE_SIZE_TO_QUALITY[imageConfig.imageSize.toUpperCase()];
+      if (quality) body.quality = quality;
     }
+    if (imageConfig.personGeneration) body.person_generation = imageConfig.personGeneration;
   }
 
   debugLog('Request URL:', url);
   debugLog('Request body:', JSON.stringify(body, null, 2));
 
-  throwIfAborted(signal);
-  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, {
+  const response = await fetchWithTimeout(
+    url,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: timedSignal,
-    });
-  } catch (error) {
-    if (didTimeout()) throw new Error('请求超时');
-    throw error;
-  } finally {
-    cleanup();
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${errorText}`);
-  }
+    },
+    signal,
+    REQUEST_TIMEOUT_MS
+  );
 
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
@@ -279,8 +286,7 @@ const callImagesAPI = async (
   imageConfig?: ImageConfig,
   signal?: AbortSignal
 ): Promise<OpenAIResponse> => {
-  const cleanBaseUrl = baseUrl.replace(/\/$/, '');
-  const url = `${cleanBaseUrl}/v1/images/generations`;
+  const url = joinUrl(baseUrl, '/v1/images/generations');
   const body: Record<string, unknown> = {
     model,
     prompt,
@@ -290,39 +296,102 @@ const callImagesAPI = async (
   if (imageConfig?.imageSize) {
     body.size = imageConfig.imageSize;
     body.imageSize = imageConfig.imageSize;     // Antigravity v4.1.14+: highest priority
+    const quality = IMAGE_SIZE_TO_QUALITY[imageConfig.imageSize.toUpperCase()];
+    if (quality) body.quality = quality;
   }
   if (imageConfig?.aspectRatio) {
     body.aspect_ratio = imageConfig.aspectRatio;
+  }
+  if (imageConfig?.personGeneration) {
+    body.person_generation = imageConfig.personGeneration;
   }
 
   debugLog('Images API URL:', url);
   debugLog('Images API body:', JSON.stringify(body, null, 2));
 
-  throwIfAborted(signal);
-  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, {
+  const response = await fetchWithTimeout(
+    url,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: timedSignal,
-    });
-  } catch (error) {
-    if (didTimeout()) throw new Error('请求超时');
-    throw error;
-  } finally {
-    cleanup();
+    },
+    signal,
+    REQUEST_TIMEOUT_MS
+  );
+  return (await response.json()) as OpenAIResponse;
+};
+
+/** base64 data URL → Blob（用于 multipart/form-data 上传） */
+const dataUrlToBlob = (dataUrl: string): Blob => {
+  let base64Data: string;
+  let mimeType: string;
+  if (!dataUrl.startsWith('data:')) {
+    base64Data = dataUrl;
+    mimeType = 'image/png';
+  } else {
+    const [header, data] = dataUrl.split(',');
+    base64Data = data;
+    mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+  }
+  const byteString = atob(base64Data);
+  const ab = new ArrayBuffer(byteString.length);
+  const ia = new Uint8Array(ab);
+  for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+  return new Blob([ab], { type: mimeType });
+};
+
+/**
+ * 调用 /v1/images/edits 端点（Antigravity 图生图）
+ * 使用 multipart/form-data 上传参考图 + 文本提示词
+ */
+const callImagesEditsAPI = async (
+  baseUrl: string,
+  apiKey: string,
+  model: string,
+  prompt: string,
+  images: string[],
+  imageConfig?: ImageConfig,
+  signal?: AbortSignal
+): Promise<OpenAIResponse> => {
+  const url = joinUrl(baseUrl, '/v1/images/edits');
+  const formData = new FormData();
+  formData.append('model', model);
+  formData.append('prompt', prompt);
+  formData.append('n', '1');
+
+  // 第一张用 'image'（兼容 OpenAI 标准字段），后续用 image2, image3...
+  for (let i = 0; i < images.length; i++) {
+    const blob = dataUrlToBlob(images[i]);
+    const fieldName = i === 0 ? 'image' : `image${i + 1}`;
+    formData.append(fieldName, blob, `ref_${i + 1}.png`);
   }
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${errorText}`);
+  if (imageConfig?.aspectRatio) {
+    formData.append('aspect_ratio', imageConfig.aspectRatio);
+  }
+  if (imageConfig?.imageSize) {
+    formData.append('image_size', imageConfig.imageSize);
+  }
+  if (imageConfig?.personGeneration) {
+    formData.append('person_generation', imageConfig.personGeneration);
   }
 
+  debugLog('Images Edits API URL:', url);
+
+  const response = await fetchWithTimeout(
+    url,
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: formData,
+    },
+    signal,
+    REQUEST_TIMEOUT_MS
+  );
   return (await response.json()) as OpenAIResponse;
 };
 
@@ -331,8 +400,7 @@ const callGeminiRelayAPI = async (
   settings: OpenAISettings,
   signal?: AbortSignal
 ): Promise<GeneratedImage> => {
-  const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
-  const url = `${cleanBaseUrl}/v1beta/models/${params.model}:generateContent`;
+  const url = joinUrl(settings.baseUrl, `/v1beta/models/${params.model}:generateContent`);
   const contents = buildGeminiContents(params);
   const imageConfig = buildGeminiImageConfig(params);
   const body: Record<string, unknown> = {
@@ -346,30 +414,19 @@ const callGeminiRelayAPI = async (
   debugLog('Gemini Relay URL:', url);
   debugLog('Gemini Relay body:', JSON.stringify(body, null, 2));
 
-  throwIfAborted(signal);
-  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, {
+  const response = await fetchWithTimeout(
+    url,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${settings.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: timedSignal,
-    });
-  } catch (error) {
-    if (didTimeout()) throw new Error('请求超时');
-    throw error;
-  } finally {
-    cleanup();
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${errorText}`);
-  }
+    },
+    signal,
+    REQUEST_TIMEOUT_MS
+  );
 
   const result = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
@@ -386,8 +443,7 @@ const callGeminiChatRelayAPI = async (
   settings: OpenAISettings,
   signal?: AbortSignal
 ): Promise<OpenAIResponse> => {
-  const cleanBaseUrl = settings.baseUrl.replace(/\/$/, '');
-  const url = `${cleanBaseUrl}/v1/chat/completions`;
+  const url = joinUrl(settings.baseUrl, '/v1/chat/completions');
   const contents = buildGeminiContents(params);
   const imageConfig = buildGeminiImageConfig(params);
   // messages 使用标准 OpenAI 格式（包含 image_url），确保代理能正确接收参考图
@@ -398,8 +454,7 @@ const callGeminiChatRelayAPI = async (
     ? mapOpenAIImageSize(imageConfig.imageSize, imageConfig.aspectRatio)
     : undefined;
   // 映射 imageSize 为 Antigravity quality 参数（standard=1K, medium=2K, hd=4K）
-  const QUALITY_MAP: Record<string, string> = { '1K': 'standard', '2K': 'medium', '4K': 'hd' };
-  const mappedQuality = imageConfig.imageSize ? QUALITY_MAP[imageConfig.imageSize.toUpperCase()] : undefined;
+  const mappedQuality = imageConfig.imageSize ? IMAGE_SIZE_TO_QUALITY[imageConfig.imageSize.toUpperCase()] : undefined;
   const generationConfig = {
     responseModalities: ['IMAGE'],
     imageConfig,
@@ -417,6 +472,7 @@ const callGeminiChatRelayAPI = async (
     ...(mappedSize && { size: mappedSize }),
     ...(mappedQuality && { quality: mappedQuality }),
     ...(imageConfig.imageSize && { imageSize: imageConfig.imageSize }), // Antigravity v4.1.14+: highest priority
+    ...(imageConfig.personGeneration && { person_generation: imageConfig.personGeneration }),
     // extra_body：兼容使用 OpenAI Python SDK 的中转
     extra_body: { generationConfig },
   };
@@ -424,30 +480,19 @@ const callGeminiChatRelayAPI = async (
   debugLog('Gemini Chat Relay URL:', url);
   debugLog('Gemini Chat Relay body:', JSON.stringify(body, null, 2));
 
-  throwIfAborted(signal);
-  const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, REQUEST_TIMEOUT_MS);
-  let response: Response;
-  try {
-    response = await fetch(url, {
+  const response = await fetchWithTimeout(
+    url,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${settings.apiKey}`,
       },
       body: JSON.stringify(body),
-      signal: timedSignal,
-    });
-  } catch (error) {
-    if (didTimeout()) throw new Error('请求超时');
-    throw error;
-  } finally {
-    cleanup();
-  }
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`API error ${response.status}: ${errorText}`);
-  }
+    },
+    signal,
+    REQUEST_TIMEOUT_MS
+  );
 
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
@@ -842,16 +887,6 @@ const extractImageFromResponse = (
   return null;
 };
 
-/** 处理可能是 URL 的图像 */
-const finalizeImage = async (image: InternalGeneratedImage, signal?: AbortSignal): Promise<GeneratedImage> => {
-  if (image._isUrl || (!image.base64.startsWith('data:') && image.base64.startsWith('http'))) {
-    debugLog('Converting image URL to base64:', image.base64);
-    image.base64 = await urlToBase64(image.base64, signal);
-    delete image._isUrl;
-  }
-  return image;
-};
-
 /** 单次生成 */
 const generateSingle = async (
   params: GenerationParams,
@@ -875,13 +910,7 @@ const generateSingle = async (
   const content = buildMessageContent(params);
   const messages = [{ role: 'user', content }];
 
-  const imageConfig: ImageConfig = imageConfigOverride ?? (() => {
-    const cfg: ImageConfig = { aspectRatio: params.aspectRatio };
-    if (params.model !== ModelType.NANO_BANANA && params.imageSize) {
-      cfg.imageSize = params.imageSize;
-    }
-    return cfg;
-  })();
+  const imageConfig: ImageConfig = imageConfigOverride ?? buildGeminiImageConfig(params);
 
   const result = await requestImageResponse(
     settings.baseUrl,
@@ -912,14 +941,7 @@ const generateSingle = async (
 
   const image = extractImageFromResponse(result, params);
   if (image) {
-    if (image._isUrl || (!image.base64.startsWith('data:') && image.base64.startsWith('http'))) {
-      debugLog('Converting image URL to base64:', image.base64);
-      image.base64 = await urlToBase64(image.base64, signal);
-      delete image._isUrl;
-      return image;
-    }
-
-    return image;
+    return finalizeImage(image, signal);
   }
 
   throw new Error('No image found in response. Check browser console for response structure.');
@@ -930,60 +952,10 @@ export const generateImages = async (
   params: GenerationParams,
   settings: OpenAISettings,
   options?: { signal?: AbortSignal; imageConfig?: ImageConfig }
-): Promise<ImageGenerationOutcome[]> => {
-  const signal = options?.signal;
-  const imageConfigOverride = options?.imageConfig;
-  const formatError = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-  const maxAttemptsPerImage = 2; // 失败后再重试 1 次
-
-  const tasks = Array.from({ length: params.count }, (_, index) => async () => {
-    if (signal?.aborted) {
-      return { index, outcome: { ok: false, error: '已停止' } as const };
-    }
-
-    let lastErr: string | null = null;
-    for (let attempt = 0; attempt < maxAttemptsPerImage; attempt++) {
-      try {
-        if (signal?.aborted) throw createAbortError();
-        const image = await generateSingle(params, settings, signal, imageConfigOverride);
-        return { index, outcome: { ok: true, image } as const };
-      } catch (e) {
-        lastErr = formatError(e);
-        if ((e as any)?.name === 'AbortError' || signal?.aborted) {
-          return { index, outcome: { ok: false, error: '已停止' } as const };
-        }
-        if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr, signal?.aborted)) {
-          const is429 = /API error 429/.test(lastErr);
-          await new Promise((r) => setTimeout(r, is429 ? 3000 : 300));
-        } else {
-          break;
-        }
-      }
-    }
-
-    return {
-      index,
-      outcome: { ok: false, error: lastErr || 'Unknown error' } as const,
-    };
-  });
-
-  const results = await runWithConcurrency(tasks, MAX_CONCURRENCY, signal);
-  const outcomes: ImageGenerationOutcome[] = Array.from(
-    { length: params.count },
-    () => ({ ok: false, error: 'Unknown error' }) as const
-  );
-
-  for (const r of results) outcomes[r.index] = r.outcome;
-  if (signal?.aborted) {
-    for (let i = 0; i < outcomes.length; i++) {
-      const o = outcomes[i];
-      if (o.ok === false && o.error === 'Unknown error') {
-        outcomes[i] = { ok: false, error: '已停止' } as const;
-      }
-    }
-  }
-  return outcomes;
-};
+): Promise<ImageGenerationOutcome[]> =>
+  runBatchImageGeneration(params.count, (signal) =>
+    generateSingle(params, settings, signal, options?.imageConfig)
+  , { signal: options?.signal });
 
 /** 编辑图像 */
 export const editImage = async (
@@ -1005,6 +977,40 @@ export const editImage = async (
     imageToSend = await compressImage(sourceImage, 600);
   }
 
+  const imageConfig: ImageConfig =
+    options?.imageConfig ?? buildImageConfig(aspectRatio, imageSize, model, prevParams?.personGeneration);
+
+  const editParams: GenerationParams = {
+    prompt: instruction,
+    aspectRatio,
+    imageSize,
+    count: 1,
+    model: model as ModelType,
+  };
+
+  debugLog('Edit request - Model:', model, 'Instruction:', instruction);
+
+  // 优先尝试 /v1/images/edits（Antigravity 支持 multipart/form-data 图生图）
+  try {
+    const editsResult = await callImagesEditsAPI(
+      settings.baseUrl,
+      settings.apiKey,
+      model,
+      instruction,
+      [imageToSend],
+      imageConfig,
+      signal,
+    );
+    const editsImage = extractImageFromResponse(editsResult, editParams);
+    if (editsImage) {
+      return finalizeImage(editsImage, signal);
+    }
+  } catch (error) {
+    if (!isEndpointUnsupported(error)) throw error;
+    debugLog('Images edits endpoint not supported, falling back to chat completions');
+  }
+
+  // 回退：通过 chat/completions 发送图生图请求
   const content: OpenAIContentPart[] = [
     {
       type: 'image_url',
@@ -1018,16 +1024,6 @@ export const editImage = async (
 
   const messages = [{ role: 'user', content }];
 
-  const imageConfig: ImageConfig = options?.imageConfig ?? (() => {
-    const cfg: ImageConfig = { aspectRatio };
-    if (model !== ModelType.NANO_BANANA && imageSize) {
-      cfg.imageSize = imageSize;
-    }
-    return cfg;
-  })();
-
-  debugLog('Edit request - Model:', model, 'Instruction:', instruction);
-
   const result = await requestImageResponse(
     settings.baseUrl,
     settings.apiKey,
@@ -1036,14 +1032,6 @@ export const editImage = async (
     imageConfig,
     signal
   );
-
-  const editParams: GenerationParams = {
-    prompt: instruction,
-    aspectRatio,
-    imageSize,
-    count: 1,
-    model: model as ModelType,
-  };
 
   const image = extractImageFromResponse(result, editParams);
   if (image) {
@@ -1065,46 +1053,8 @@ export const optimizePrompt = async (
   settings: { apiKey: string; baseUrl: string },
   model: string
 ): Promise<string> => {
-  if (!model || !model.trim()) {
-    throw new Error('请先设置提示词优化模型');
-  }
-
   try {
-    const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert prompt engineer for AI image generation. Rewrite prompts to be more descriptive, detailed, and optimized for high-quality generation. Keep the core intent but enhance lighting, texture, and style details. Return ONLY the optimized prompt text.'
-          },
-          {
-            role: 'user',
-            content: `Original Prompt: ${prompt}`
-          }
-        ],
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    const optimized = data.choices?.[0]?.message?.content?.trim();
-    
-    if (!optimized) {
-      throw new Error('No response from optimization model');
-    }
-
-    return optimized;
+    return await optimizePromptOpenAICompat(prompt, settings, model);
   } catch (error) {
     console.error('Prompt optimization failed:', error);
     throw error;

@@ -1,26 +1,22 @@
 /**
  * Kie AI Jobs API（nano-banana-pro 等）
  */
-import { GenerationParams, GeneratedImage, ModelType } from '../types';
+import { GenerationParams, GeneratedImage, ImageGenerationOutcome, ModelType } from '../types';
 import {
   createAbortError,
   createGeneratedImage,
-  runWithConcurrency,
   createTimeoutSignal,
-  isRetriableError,
-  MAX_CONCURRENCY,
-  REQUEST_TIMEOUT_MS,
-  throwIfAborted,
-  urlToBase64,
+  finalizeImage,
   InternalGeneratedImage,
+  joinUrl,
+  optimizePromptOpenAICompat,
+  REQUEST_TIMEOUT_MS,
+  runBatchImageGeneration,
+  throwIfAborted,
 } from './shared';
 import { ensureImageUrl } from './kieUpload';
 
 const DEFAULT_POLL_INTERVAL_MS = 1500;
-
-export type ImageGenerationOutcome =
-  | { ok: true; image: GeneratedImage }
-  | { ok: false; error: string };
 
 export interface KieSettings {
   apiKey: string;
@@ -58,19 +54,6 @@ const sleep = async (ms: number, signal?: AbortSignal): Promise<void> => {
     };
     signal.addEventListener('abort', onAbort, { once: true });
   });
-};
-
-const finalizeImage = async (image: InternalGeneratedImage, signal?: AbortSignal): Promise<GeneratedImage> => {
-  if (image._isUrl || (!image.base64.startsWith('data:') && image.base64.startsWith('http'))) {
-    image.base64 = await urlToBase64(image.base64, signal);
-    delete image._isUrl;
-  }
-  return image;
-};
-
-const joinUrl = (baseUrl: string, path: string): string => {
-  const clean = baseUrl.replace(/\/$/, '');
-  return `${clean}${path}`;
 };
 
 export const createTask = async (
@@ -299,63 +282,14 @@ export const generateImages = async (
   options?: { signal?: AbortSignal; imageInputUrls?: string[] }
 ): Promise<ImageGenerationOutcome[]> => {
   const signal = options?.signal;
-  const formatError = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-  const maxAttemptsPerImage = 2; // 失败后再重试 1 次
-
   // refImages 上传一次，复用给并发任务，避免每张图重复上传
   const raw = options?.imageInputUrls ?? params.referenceImages ?? [];
   const sharedImageInputUrls = raw.length > 0 ? await resolveImageInputUrls(raw, settings.apiKey, signal) : [];
-
   const perTaskOptions = { ...options, imageInputUrls: sharedImageInputUrls };
 
-  const tasks = Array.from({ length: params.count }, (_, index) => async () => {
-    if (signal?.aborted) {
-      return { index, outcome: { ok: false, error: '已停止' } as const };
-    }
-
-    let lastErr: string | null = null;
-    for (let attempt = 0; attempt < maxAttemptsPerImage; attempt++) {
-      try {
-        if (signal?.aborted) throw createAbortError();
-        const image = await generateSingle(params, settings, perTaskOptions);
-        return { index, outcome: { ok: true, image } as const };
-      } catch (e) {
-        lastErr = formatError(e);
-        if ((e as any)?.name === 'AbortError' || signal?.aborted) {
-          return { index, outcome: { ok: false, error: '已停止' } as const };
-        }
-        if (attempt < maxAttemptsPerImage - 1 && lastErr && isRetriableError(lastErr, signal?.aborted)) {
-          const is429 = /\b429\b/.test(lastErr);
-          await new Promise((r) => setTimeout(r, is429 ? 3000 : 300));
-        } else {
-          break;
-        }
-      }
-    }
-
-    return {
-      index,
-      outcome: { ok: false, error: lastErr || 'Unknown error' } as const,
-    };
-  });
-
-  const results = await runWithConcurrency(tasks, MAX_CONCURRENCY, signal);
-  const outcomes: ImageGenerationOutcome[] = Array.from(
-    { length: params.count },
-    () => ({ ok: false, error: 'Unknown error' }) as const
-  );
-
-  for (const r of results) outcomes[r.index] = r.outcome;
-  if (signal?.aborted) {
-    for (let i = 0; i < outcomes.length; i++) {
-      const o = outcomes[i];
-      if (o.ok === false && o.error === 'Unknown error') {
-        outcomes[i] = { ok: false, error: '已停止' } as const;
-      }
-    }
-  }
-
-  return outcomes;
+  return runBatchImageGeneration(params.count, (sig) =>
+    generateSingle(params, settings, { ...perTaskOptions, signal: sig })
+  , { signal });
 };
 
 export const editImage = async (
@@ -405,52 +339,14 @@ export const editImage = async (
   }
 };
 
-/** 优化 Prompt（Kie AI） */
+/** 优化 Prompt（Kie AI，复用 OpenAI 兼容端点） */
 export const optimizePrompt = async (
   prompt: string,
   settings: { apiKey: string; baseUrl: string },
   model: string
 ): Promise<string> => {
-  if (!model || !model.trim()) {
-    throw new Error('请先设置提示词优化模型');
-  }
-
   try {
-    const response = await fetch(`${settings.baseUrl.replace(/\/$/, '')}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${settings.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are an expert prompt engineer for AI image generation. Rewrite prompts to be more descriptive, detailed, and optimized for high-quality generation. Keep the core intent but enhance lighting, texture, and style details. Return ONLY the optimized prompt text.'
-          },
-          {
-            role: 'user',
-            content: `Original Prompt: ${prompt}`
-          }
-        ],
-        temperature: 0.7,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-    const optimized = data.choices?.[0]?.message?.content?.trim();
-    
-    if (!optimized) {
-      throw new Error('No response from optimization model');
-    }
-
-    return optimized;
+    return await optimizePromptOpenAICompat(prompt, settings, model);
   } catch (error) {
     console.error('Prompt optimization failed:', error);
     throw error;

@@ -8,7 +8,7 @@ import {
   setGalleryDirectoryHandle,
 } from '../services/db';
 import { useToast } from './Toast';
-import { getAspectRatioCSS, measureImageDimensions } from '../utils/aspectRatio';
+import { useAspectRatio } from '../hooks/useAspectRatio';
 
 interface PortfolioGridProps {
   images: GeneratedImage[];
@@ -16,18 +16,6 @@ interface PortfolioGridProps {
   onEdit: (image: GeneratedImage) => void;
   onDelete: (id: string) => void;
 }
-
-/** 缓存已测量的图片真实宽高比 */
-const MAX_PORTFOLIO_CACHE = 200;
-const portfolioRatioCache = new Map<string, string>();
-
-const setPortfolioCached = (key: string, value: string) => {
-  if (portfolioRatioCache.size >= MAX_PORTFOLIO_CACHE) {
-    const firstKey = portfolioRatioCache.keys().next().value;
-    if (firstKey !== undefined) portfolioRatioCache.delete(firstKey);
-  }
-  portfolioRatioCache.set(key, value);
-};
 
 interface PortfolioImageCardProps {
   img: GeneratedImage;
@@ -47,27 +35,7 @@ const PortfolioImageCard: React.FC<PortfolioImageCardProps> = ({
   onEdit,
   onDelete,
 }) => {
-  const knownCSS = getAspectRatioCSS(img.params?.aspectRatio);
-  const [aspectRatio, setAspectRatio] = useState<string | undefined>(() => {
-    if (knownCSS) return knownCSS;
-    return portfolioRatioCache.get(img.id);
-  });
-
-  useEffect(() => {
-    if (knownCSS) { setAspectRatio(knownCSS); return; }
-    const cached = portfolioRatioCache.get(img.id);
-    if (cached) { setAspectRatio(cached); return; }
-    let cancelled = false;
-    measureImageDimensions(img.base64).then(({ width, height }) => {
-      if (cancelled) return;
-      const css = `${width} / ${height}`;
-      setPortfolioCached(img.id, css);
-      setAspectRatio(css);
-    }).catch(() => {
-      if (!cancelled) setAspectRatio('1 / 1');
-    });
-    return () => { cancelled = true; };
-  }, [img.id, img.base64, knownCSS]);
+  const aspectRatio = useAspectRatio(img.id, img.base64, img.params?.aspectRatio);
 
   return (
     <div
@@ -249,6 +217,35 @@ export const PortfolioGrid = ({
     setGalleryPermission('unknown');
   };
 
+  const galleryStatusMessage = (() => {
+    if (galleryDirName) {
+      if (galleryPermission !== 'granted') {
+        return (
+          <p className="text-xs text-gray-500">
+            已选择目录，但当前未授予写入权限（浏览器重启/刷新后常见）；点击右上角&quot;重新授权&quot;后才会自动落盘，未授权时仅保存缩略图。
+          </p>
+        );
+      }
+      return (
+        <p className="text-xs text-gray-500">
+          落盘存储已启用：原图保存到该目录，浏览器仅保留缩略图索引。
+        </p>
+      );
+    }
+    if (gallerySupported) {
+      return (
+        <p className="text-xs text-yellow-500/80">
+          ⚠ 未设置图库目录 — 当前仅保留缩略图，原图不会被保存。可在此选择目录，或在生成时会自动引导设置。
+        </p>
+      );
+    }
+    return (
+      <p className="text-xs text-gray-500">
+        目录选择需要 Chrome/Edge 且在安全上下文（localhost 或 https）下打开；通过局域网 HTTP 访问时通常不可用。
+      </p>
+    );
+  })();
+
   const handleClearAllLocalData = async () => {
     if (isClearing) return;
     if (!confirm('确认清空本地数据？这会删除浏览器里保存的 API Key、供应商配置、草稿、作品集图片等。')) return;
@@ -347,25 +344,7 @@ export const PortfolioGrid = ({
         </div>
       </div>
 
-      {galleryDirName ? (
-        galleryPermission !== 'granted' ? (
-          <p className="text-xs text-gray-500">
-            已选择目录，但当前未授予写入权限（浏览器重启/刷新后常见）；点击右上角“重新授权”后才会自动落盘，未授权时仅保存缩略图。
-          </p>
-        ) : (
-          <p className="text-xs text-gray-500">
-            落盘存储已启用：原图保存到该目录，浏览器仅保留缩略图索引。
-          </p>
-        )
-      ) : gallerySupported ? (
-        <p className="text-xs text-yellow-500/80">
-          ⚠ 未设置图库目录 — 当前仅保留缩略图，原图不会被保存。可在此选择目录，或在生成时会自动引导设置。
-        </p>
-      ) : (
-        <p className="text-xs text-gray-500">
-          目录选择需要 Chrome/Edge 且在安全上下文（localhost 或 https）下打开；通过局域网 HTTP 访问时通常不可用。
-        </p>
-      )}
+{galleryStatusMessage}
 
       <PortfolioMasonry
         images={sortedImages}

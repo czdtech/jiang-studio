@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { Sparkles, Edit, Download, Image, AlertTriangle } from 'lucide-react';
 import { GeneratedImage, GenerationParams } from '../types';
 import { ImageInfoPopover } from './ImageInfoPopover';
-import { getAspectRatioCSS, measureImageDimensions } from '../utils/aspectRatio';
+import { getAspectRatioCSS } from '../utils/aspectRatio';
+import { useAspectRatio } from '../hooks/useAspectRatio';
 
 export type ImageGridSlot =
   | { id: string; status: 'pending' }
@@ -27,45 +28,6 @@ interface ImageGridProps {
 const GRID_GAP = 12;
 const MAX_COLUMNS = 4;
 
-/** 缓存已测量的图片真实宽高比（以 id 为 key，避免 base64 占用大量内存） */
-const MAX_RATIO_CACHE = 200;
-const measuredRatioCache = new Map<string, string>();
-
-const setCachedRatio = (key: string, value: string) => {
-  if (measuredRatioCache.size >= MAX_RATIO_CACHE) {
-    const firstKey = measuredRatioCache.keys().next().value;
-    if (firstKey !== undefined) measuredRatioCache.delete(firstKey);
-  }
-  measuredRatioCache.set(key, value);
-};
-
-/** 获取图片的 aspect-ratio CSS 值：优先用 params，auto 时测量 */
-const useResolvedAspectRatio = (id: string, src: string, paramsRatio?: string): string | undefined => {
-  const known = getAspectRatioCSS(paramsRatio);
-  const [measured, setMeasured] = useState<string | undefined>(() => {
-    if (known) return known;
-    return measuredRatioCache.get(id);
-  });
-
-  useEffect(() => {
-    if (known) { setMeasured(known); return; }
-    const cached = measuredRatioCache.get(id);
-    if (cached) { setMeasured(cached); return; }
-    let cancelled = false;
-    measureImageDimensions(src).then(({ width, height }) => {
-      if (cancelled) return;
-      const css = `${width} / ${height}`;
-      setCachedRatio(id, css);
-      setMeasured(css);
-    }).catch(() => {
-      if (!cancelled) setMeasured('1 / 1');
-    });
-    return () => { cancelled = true; };
-  }, [id, src, known]);
-
-  return measured;
-};
-
 interface MasonryImageCardProps {
   img: GeneratedImage;
   idx: number;
@@ -84,7 +46,7 @@ const MasonryImageCard: React.FC<MasonryImageCardProps> = ({
   onEdit,
   onIterate,
 }) => {
-  const aspectRatio = useResolvedAspectRatio(img.id, img.base64, img.params?.aspectRatio);
+  const aspectRatio = useAspectRatio(img.id, img.base64, img.params?.aspectRatio);
 
   return (
     <div

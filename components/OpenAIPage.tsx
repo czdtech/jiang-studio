@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Plus, ChevronDown, ChevronRight, X, Plug, Star, Trash2, Sparkles, Image as ImageIcon, Wand2, FolderOpen, History, Settings, ImagePlus } from 'lucide-react';
+import { RefreshCw, Plus, ChevronDown, ChevronRight, X, Star, Trash2, Sparkles, Image as ImageIcon, Wand2, FolderOpen, History, Settings, ImagePlus } from 'lucide-react';
 import {
   OpenAISettings,
   GeneratedImage,
@@ -25,14 +25,13 @@ import {
   getFavoriteButtonStyles,
   inputBaseStyles,
   selectBaseStyles,
-  selectSmallStyles,
 } from './uiStyles';
 import {
   getPromptOptimizerConfig,
   getIterationAssistantConfig,
   getRecentImagesByScope,
 } from '../services/db';
-import { compressImage } from '../services/shared';
+import { compressImage, readFilesAsDataUrls } from '../services/shared';
 import { useProviderManagement } from '../hooks/useProviderManagement';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
 import { parsePromptsToBatch } from '../services/batch';
@@ -130,9 +129,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [refImages, setRefImages] = useState<string[]>([]);
-  const [customModel, setCustomModel] = useState(() => (
-    variant === 'antigravity_tools' ? 'gemini-3-pro-image' : 'gemini-3-pro-image'
-  ));
+  const [customModel, setCustomModel] = useState('gemini-3-pro-image');
   const [params, setParams] = useState<GenerationParams>({
     prompt: '',
     aspectRatio: '1:1',
@@ -827,25 +824,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
-    const files = Array.from(fileList) as File[];
-
     try {
-      const rawImages = await Promise.all(
-        files.map(file =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              if (typeof reader.result === 'string') {
-                resolve(reader.result);
-              } else {
-                reject(new Error('Failed to read file'));
-              }
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          })
-        )
-      );
+      const rawImages = await readFilesAsDataUrls(Array.from(fileList));
       const newImages = await Promise.all(rawImages.map(img => compressImage(img)));
       setRefImages((prev) => [...prev, ...newImages].slice(0, MAX_REF_IMAGES));
     } catch (err) {
@@ -1355,6 +1335,22 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
                   ))}
                 </select>
               </div>
+              {isAntigravityTools && (
+                <div className="aurora-config-item">
+                  <label>人物</label>
+                  <select
+                    value={params.personGeneration || ''}
+                    onChange={(e) => {
+                      const v = e.target.value || undefined;
+                      setParams(prev => ({ ...prev, personGeneration: v as GenerationParams['personGeneration'] }));
+                    }}
+                  >
+                    <option value="">默认</option>
+                    <option value="allow_adult">允许</option>
+                    <option value="dont_allow">禁止</option>
+                  </select>
+                </div>
+              )}
               <div className="aurora-config-item">
                 <label>并发</label>
                 <select

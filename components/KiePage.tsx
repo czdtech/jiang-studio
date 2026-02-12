@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Settings, RefreshCw, Plus, X, Star, Trash2, ChevronDown, ChevronRight, Sparkles, Image as ImageIcon, Wand2, ImagePlus, FolderOpen, History } from 'lucide-react';
-import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, IterationAssistantConfig, ProviderDraft, ProviderProfile, ProviderScope, BatchConfig, IterationContext, IterationMode } from '../types';
+import { GeneratedImage, GenerationParams, ModelType, PromptOptimizerConfig, IterationAssistantConfig, ProviderDraft, ProviderProfile, ProviderScope, IterationContext, IterationMode } from '../types';
 import { generateImages, KieSettings } from '../services/kie';
 import { optimizeUserPrompt } from '../services/mcp';
 import { useToast } from './Toast';
@@ -14,7 +14,6 @@ import {
   getFavoriteButtonStyles,
   inputBaseStyles,
   selectBaseStyles,
-  selectSmallStyles,
 } from './uiStyles';
 import {
   deleteProvider as deleteProviderFromDb,
@@ -28,7 +27,7 @@ import {
   upsertDraft as upsertDraftInDb,
   upsertProvider as upsertProviderInDb,
 } from '../services/db';
-import { compressImage, getUniqueProviderName } from '../services/shared';
+import { compressImage, getUniqueProviderName, readFilesAsDataUrls } from '../services/shared';
 import { useBatchGenerator } from '../hooks/useBatchGenerator';
 import { parsePromptsToBatch } from '../services/batch';
 
@@ -737,25 +736,8 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0) return;
 
-    const files = Array.from(fileList) as File[];
-
     try {
-      const rawImages = await Promise.all(
-        files.map(file =>
-          new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-              if (typeof reader.result === 'string') {
-                resolve(reader.result);
-              } else {
-                reject(new Error('Failed to read file'));
-              }
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          })
-        )
-      );
+      const rawImages = await readFilesAsDataUrls(Array.from(fileList));
       const newImages = await Promise.all(rawImages.map(img => compressImage(img)));
       setRefImages((prev) => [...prev, ...newImages].slice(0, MAX_REF_IMAGES));
     } catch (err) {
