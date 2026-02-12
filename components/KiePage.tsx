@@ -241,6 +241,8 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
   const [apiConfigExpanded, setApiConfigExpanded] = useState(false);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
   const historyRef = useRef<HTMLDivElement>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const refreshHistory = useCallback(() => setHistoryVersion(v => v + 1), []);
 
   // 从 Portfolio 恢复历史生成记录
   useEffect(() => {
@@ -251,7 +253,7 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
       setHistoryImages(images);
     });
     return () => { cancelled = true; };
-  }, [activeProviderId]);
+  }, [activeProviderId, historyVersion]);
 
   // 历史记录展开时自动滚动
   useEffect(() => {
@@ -284,7 +286,8 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
     saveImage,
     ensureGalleryDir,
     scope,
-    activeProviderId
+    activeProviderId,
+    onImagesSaved: refreshHistory
   });
 
   // 迭代助手：生成回调（需要在 params、useBatchGenerator 之后声明）
@@ -347,6 +350,7 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
       for (const img of successImages) {
         await saveImage(img);
       }
+      refreshHistory();
 
       showToast(`迭代生成完成（${successImages.length} 张新图）`, 'success');
     } catch (error) {
@@ -681,6 +685,7 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
       for (const img of successImages) {
         await saveImage(img);
       }
+      refreshHistory();
 
       const successCount = successImages.length;
       const failCount = currentParams.count - successCount;
@@ -1046,17 +1051,15 @@ export const KiePage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }: K
                     )}
                   </>
                 ) : (
-                  (currentImages.length > 0 || isGenerating || generatedSlots.length > 0 || historyImages.length === 0) && (
-                    <ImageGrid
-                      images={currentImages}
-                      slots={generatedSlots}
-                      isGenerating={isGenerating}
-                      params={params}
-                      onImageClick={onImageClick}
-                      onEdit={onEdit}
-                      onIterate={handleIterate}
-                    />
-                  )
+                  <ImageGrid
+                    images={currentImages}
+                    slots={generatedSlots}
+                    isGenerating={isGenerating}
+                    params={params}
+                    onImageClick={onImageClick}
+                    onEdit={onEdit}
+                    onIterate={handleIterate}
+                  />
                 )}
               </>
             )}

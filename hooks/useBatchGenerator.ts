@@ -24,6 +24,8 @@ interface UseBatchGeneratorProps {
     ensureGalleryDir: () => Promise<boolean>;
     scope: ProviderScope;
     activeProviderId: string;
+    /** 图片保存到 IndexedDB 后回调（用于刷新历史记录） */
+    onImagesSaved?: () => void;
 }
 
 interface UseBatchGeneratorResult {
@@ -59,7 +61,8 @@ export const useBatchGenerator = ({
     saveImage,
     ensureGalleryDir,
     scope,
-    activeProviderId
+    activeProviderId,
+    onImagesSaved
 }: UseBatchGeneratorProps): UseBatchGeneratorResult => {
     const [batchTasks, setBatchTasks] = useState<BatchTask[]>([]);
     const [isBatchMode, setIsBatchMode] = useState(false);
@@ -152,6 +155,7 @@ export const useBatchGenerator = ({
                         if (batchAbortRef.current || controller.signal.aborted) break;
                         await saveImage(img);
                     }
+                    if (successImages.length > 0) onImagesSaved?.();
 
                     // Map back to outcomes with processed images
                     return outcomes.map(o => {
@@ -181,7 +185,7 @@ export const useBatchGenerator = ({
             setIsGenerating(false);
             batchAbortControllerRef.current = null;
         }
-    }, [isGenerating, batchConfig, scope, activeProviderId, saveImage, ensureGalleryDir, showToast]);
+    }, [isGenerating, batchConfig, scope, activeProviderId, saveImage, ensureGalleryDir, showToast, onImagesSaved]);
 
     const stopBatch = useCallback(() => {
         if (!isGenerating) return;

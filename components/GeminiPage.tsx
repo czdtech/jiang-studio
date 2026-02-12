@@ -244,6 +244,8 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
   const [historyImages, setHistoryImages] = useState<GeneratedImage[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [apiConfigExpanded, setApiConfigExpanded] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const refreshHistory = useCallback(() => setHistoryVersion(v => v + 1), []);
 
   // 从 Portfolio 恢复历史生成记录
   useEffect(() => {
@@ -254,7 +256,7 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
       setHistoryImages(images);
     });
     return () => { cancelled = true; };
-  }, [activeProviderId]);
+  }, [activeProviderId, historyVersion]);
 
   // 历史记录展开时自动滚动
   useEffect(() => {
@@ -288,7 +290,8 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
     saveImage,
     ensureGalleryDir,
     scope,
-    activeProviderId
+    activeProviderId,
+    onImagesSaved: refreshHistory
   });
 
   const handleIterationGenerate = useCallback(async (optimizedPrompt: string, context: IterationContext) => {
@@ -356,6 +359,7 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
       for (const img of successImages) {
         await saveImage(img);
       }
+      refreshHistory();
 
       showToast(`迭代生成完成（${successImages.length} 张新图）`, 'success');
     } catch (error) {
@@ -516,6 +520,7 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
       for (const img of successImages) {
         await saveImage(img);
       }
+      refreshHistory();
 
       const successCount = successImages.length;
       const failCount = currentParams.count - successCount;
@@ -876,17 +881,15 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
                     )}
                   </>
                 ) : (
-                  (currentImages.length > 0 || isGenerating || generatedSlots.length > 0 || historyImages.length === 0) && (
-                    <ImageGrid
-                      images={currentImages}
-                      slots={generatedSlots}
-                      isGenerating={isGenerating}
-                      params={params}
-                      onImageClick={onImageClick}
-                      onEdit={onEdit}
-                      onIterate={handleIterate}
-                    />
-                  )
+                  <ImageGrid
+                    images={currentImages}
+                    slots={generatedSlots}
+                    isGenerating={isGenerating}
+                    params={params}
+                    onImageClick={onImageClick}
+                    onEdit={onEdit}
+                    onIterate={handleIterate}
+                  />
                 )}
               </>
             )}
@@ -1050,7 +1053,7 @@ export const GeminiPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit }
                   value={params.aspectRatio}
                   onChange={(e) => setParams({ ...params, aspectRatio: e.target.value as GenerationParams['aspectRatio'] })}
                 >
-                  {['1:1', '16:9', '9:16', '4:3', '3:4'].map((r) => (
+                  {['1:1', '2:3', '3:2', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '21:9'].map((r) => (
                     <option key={r} value={r}>{r}</option>
                   ))}
                 </select>

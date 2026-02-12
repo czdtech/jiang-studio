@@ -227,11 +227,11 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
     if (sizeMatch?.[1] === '2k') detectedSize = '2K';
     if (sizeMatch?.[1] === '4k') detectedSize = '4K';
 
-    const ratioMatch = s.match(/(?:^|[-_])(1|3|4|9|16|21)[x-](1|3|4|9|16)(?:$|[-_])/);
+    const ratioMatch = s.match(/(?:^|[-_])(1|2|3|4|5|9|16|21)[x-](1|2|3|4|5|9|16)(?:$|[-_])/);
     let detectedRatio: GenerationParams['aspectRatio'] | null = null;
     if (ratioMatch) {
       const key = `${ratioMatch[1]}:${ratioMatch[2]}`;
-      const allowed = new Set(['1:1', '16:9', '9:16', '4:3', '3:4', '21:9']);
+      const allowed = new Set(['1:1', '2:3', '3:2', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '21:9']);
       if (allowed.has(key)) detectedRatio = key as GenerationParams['aspectRatio'];
     }
 
@@ -337,6 +337,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
   const [apiConfigExpanded, setApiConfigExpanded] = useState(false);
   const [generatedSlots, setGeneratedSlots] = useState<ImageGridSlot[]>([]);
   const historyRef = useRef<HTMLDivElement>(null);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const refreshHistory = useCallback(() => setHistoryVersion(v => v + 1), []);
 
   // 从 Portfolio 恢复历史生成记录
   useEffect(() => {
@@ -347,7 +349,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       setHistoryImages(images);
     });
     return () => { cancelled = true; };
-  }, [activeProviderId]);
+  }, [activeProviderId, historyVersion]);
 
   // 历史记录展开时自动滚动
   useEffect(() => {
@@ -380,7 +382,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       saveImage,
       ensureGalleryDir,
       scope,
-      activeProviderId
+      activeProviderId,
+      onImagesSaved: refreshHistory
   });
 
   const handleIterationGenerate = useCallback(async (optimizedPrompt: string, context: IterationContext) => {
@@ -444,6 +447,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       for (const img of successImages) {
         await saveImage(img);
       }
+      refreshHistory();
 
       showToast(`迭代生成完成（${successImages.length} 张新图）`, 'success');
     } catch (error) {
@@ -457,7 +461,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       setIsGenerating(false);
       abortControllerRef.current = null;
     }
-  }, [params, refImages, customModel, apiKey, baseUrl, settings, scope, activeProviderId, requiresApiKey, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks]);
+  }, [params, refImages, customModel, apiKey, baseUrl, settings, scope, activeProviderId, requiresApiKey, saveImage, showToast, isGenerating, isBatchMode, setBatchTasks, refreshHistory]);
 
   const batchPromptCount = useMemo(() => parsePromptsToBatch(prompt).length, [prompt]);
 
@@ -770,6 +774,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       for (const img of successImages) {
         await saveImage(img);
       }
+      refreshHistory();
 
       const successCount = successImages.length;
       const failCount = currentParams.count - successCount;
@@ -1148,17 +1153,15 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
                     )}
                   </>
                 ) : (
-                  (currentImages.length > 0 || isGenerating || generatedSlots.length > 0 || historyImages.length === 0) && (
-                    <ImageGrid
-                      images={currentImages}
-                      slots={generatedSlots}
-                      isGenerating={isGenerating}
-                      params={params}
-                      onImageClick={onImageClick}
-                      onEdit={onEdit}
-                      onIterate={handleIterate}
-                    />
-                  )
+                  <ImageGrid
+                    images={currentImages}
+                    slots={generatedSlots}
+                    isGenerating={isGenerating}
+                    params={params}
+                    onImageClick={onImageClick}
+                    onEdit={onEdit}
+                    onIterate={handleIterate}
+                  />
                 )}
               </>
             )}
@@ -1336,7 +1339,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
                   value={params.aspectRatio}
                   onChange={(e) => setParams({ ...params, aspectRatio: e.target.value as GenerationParams['aspectRatio'] })}
                 >
-                  {['1:1', '16:9', '9:16', '4:3', '3:4', '21:9'].map((r) => (
+                  {['1:1', '2:3', '3:2', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '21:9'].map((r) => (
                     <option key={r} value={r}>{r}</option>
                   ))}
                 </select>
