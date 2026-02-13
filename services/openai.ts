@@ -22,6 +22,7 @@ import {
 } from './shared';
 import { debugLog } from './logger';
 import { parseAspectRatio } from '../utils/aspectRatio';
+import { parseModelNameForImageParams } from '../utils/modelNameParams';
 
 /** 从文本中提取图像 data URL/链接 */
 const extractImageFromText = (text: string): string | null => {
@@ -188,27 +189,50 @@ const buildImageConfig = (
   return config;
 };
 
+/** 根据模型名移除冲突字段，避免与模型内置方向/分辨率冲突 */
+const filterImageConfigByModel = (config: ImageConfig, model: string): ImageConfig => {
+  const parsed = parseModelNameForImageParams(model);
+  if (!parsed.detectedRatio && !parsed.detectedSize) return config;
+  const result = { ...config };
+  if (parsed.detectedRatio) delete result.aspectRatio;
+  if (parsed.detectedSize) delete result.imageSize;
+  return result;
+};
+
 const buildGeminiImageConfig = (params: GenerationParams): ImageConfig => {
-  return buildImageConfig(
+  const raw = buildImageConfig(
     params.aspectRatio,
     params.imageSize,
     params.model,
     params.personGeneration
   );
+  return filterImageConfigByModel(raw, params.model);
 };
 
 const extractGeminiImageFromResponse = (
-  response: { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }> },
+  response: { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string }; text?: string }> } }> },
   params: GenerationParams
-): GeneratedImage | null => {
+): InternalGeneratedImage | null => {
   const parts = response.candidates?.[0]?.content?.parts;
   if (!parts) return null;
 
+  // 1. 优先检查 inlineData（base64 格式，Gemini 官方返回）
   for (const part of parts) {
     if (part.inlineData?.data) {
       const mimeType = part.inlineData.mimeType || 'image/png';
       const base64 = `data:${mimeType};base64,${part.inlineData.data}`;
       return createGeneratedImage(base64, params);
+    }
+  }
+
+  // 2. 检查 text 部分中的图片 URL（部分第三方中转返回 markdown 图片链接或纯 URL）
+  for (const part of parts) {
+    if (part.text) {
+      const extracted = extractImageFromText(part.text);
+      if (extracted) {
+        const isUrl = extracted.startsWith('http');
+        return createGeneratedImage(extracted, params, isUrl);
+      }
     }
   }
 
@@ -429,10 +453,10 @@ const callGeminiRelayAPI = async (
   );
 
   const result = (await response.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
+    candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string }; text?: string }> } }>;
   };
   const image = extractGeminiImageFromResponse(result, params);
-  if (image) return image;
+  if (image) return finalizeImage(image, signal);
 
   debugLog('Gemini Relay Response:', JSON.stringify(result, null, 2));
   throw new Error('No image in Gemini relay response. Check browser console.');
@@ -900,9 +924,10 @@ const generateSingle = async (
     try {
       return await callGeminiRelayAPI(params, settings, signal);
     } catch (error) {
-      // 仅当端点不支持（404/405/501）时才降级到 /v1/chat/completions
-      if (!isEndpointUnsupported(error)) throw error;
-      debugLog('Gemini native relay endpoint not supported, falling back to /v1/chat/completions');
+      // 用户主动取消时直接抛出，不降级
+      if (signal?.aborted) throw error;
+      // 其它任何错误（CORS、404、网络问题等）一律降级到 /v1/chat/completions
+      debugLog('Gemini native relay failed, falling back to /v1/chat/completions:', error);
     }
     return await requestGeminiChatImage(params, settings, signal);
   }
@@ -977,8 +1002,10 @@ export const editImage = async (
     imageToSend = await compressImage(sourceImage, 600);
   }
 
-  const imageConfig: ImageConfig =
-    options?.imageConfig ?? buildImageConfig(aspectRatio, imageSize, model, prevParams?.personGeneration);
+  const imageConfig: ImageConfig = filterImageConfigByModel(
+    options?.imageConfig ?? buildImageConfig(aspectRatio, imageSize, model, prevParams?.personGeneration),
+    model
+  );
 
   const editParams: GenerationParams = {
     prompt: instruction,

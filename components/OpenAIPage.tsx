@@ -14,6 +14,7 @@ import {
 } from '../types';
 import { generateImages } from '../services/openai';
 import { optimizeUserPrompt } from '../services/mcp';
+import { parseModelNameForImageParams } from '../utils/modelNameParams';
 import { useToast } from './Toast';
 import { ImageGrid, ImageGridSlot } from './ImageGrid';
 import { BatchImageGrid } from './BatchImageGrid';
@@ -213,25 +214,13 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
     };
   }, []);
 
-  // Antigravity 模型后缀自动同步：选择带后缀的模型时同步比例/尺寸选择器
-  // e.g. gemini-3-pro-image-2k-16x9 → aspectRatio='16:9', imageSize='2K'
+  // 模型名参数自动同步：选择带方向/分辨率后缀的模型时同步比例/尺寸选择器
+  // e.g. gemini-3-pro-image-landscape-4k → aspectRatio='16:9', imageSize='4K'
+  // 同时适用于第三方模式和 Antigravity 模式
+  const modelImpliedParams = useMemo(() => parseModelNameForImageParams(customModel), [customModel]);
+
   useEffect(() => {
-    if (!isAntigravityTools) return;
-    const s = customModel.toLowerCase();
-
-    const sizeMatch = s.match(/(?:^|[-_])(2k|4k)(?:$|[-_])/);
-    let detectedSize: GenerationParams['imageSize'] | null = null;
-    if (sizeMatch?.[1] === '2k') detectedSize = '2K';
-    if (sizeMatch?.[1] === '4k') detectedSize = '4K';
-
-    const ratioMatch = s.match(/(?:^|[-_])(1|2|3|4|5|9|16|21)[x-](1|2|3|4|5|9|16)(?:$|[-_])/);
-    let detectedRatio: GenerationParams['aspectRatio'] | null = null;
-    if (ratioMatch) {
-      const key = `${ratioMatch[1]}:${ratioMatch[2]}`;
-      const allowed = new Set(['1:1', '2:3', '3:2', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '21:9']);
-      if (allowed.has(key)) detectedRatio = key as GenerationParams['aspectRatio'];
-    }
-
+    const { detectedRatio, detectedSize } = modelImpliedParams;
     if (detectedRatio || detectedSize) {
       setParams(prev => ({
         ...prev,
@@ -239,7 +228,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
         ...(detectedSize && { imageSize: detectedSize }),
       }));
     }
-  }, [customModel, isAntigravityTools]);
+  }, [modelImpliedParams]);
 
   // 迭代助手：图片上下文
   const [iterationMode, setIterationMode] = useState<IterationMode>('prompt-only');
@@ -1318,6 +1307,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
                 <select
                   value={params.aspectRatio}
                   onChange={(e) => setParams({ ...params, aspectRatio: e.target.value as GenerationParams['aspectRatio'] })}
+                  disabled={!!modelImpliedParams.detectedRatio}
+                  title={modelImpliedParams.detectedRatio ? '比例由模型名决定' : undefined}
                 >
                   {['1:1', '2:3', '3:2', '4:3', '3:4', '4:5', '5:4', '16:9', '9:16', '21:9'].map((r) => (
                     <option key={r} value={r}>{r}</option>
@@ -1329,6 +1320,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
                 <select
                   value={params.imageSize}
                   onChange={(e) => setParams({ ...params, imageSize: e.target.value as GenerationParams['imageSize'] })}
+                  disabled={!!modelImpliedParams.detectedSize}
+                  title={modelImpliedParams.detectedSize ? '尺寸由模型名决定' : undefined}
                 >
                   {['1K', '2K', '4K'].map((s) => (
                     <option key={s} value={s}>{s}</option>

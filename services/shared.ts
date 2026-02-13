@@ -113,6 +113,18 @@ export const formatError = (e: unknown): string => (e instanceof Error ? e.messa
 export const joinUrl = (baseUrl: string, path: string): string =>
   `${baseUrl.replace(/\/$/, '')}${path}`;
 
+/**
+ * 开发模式下通过 Vite CORS 代理转发外部请求。
+ * 将 https://api.example.com/path 转为 /cors-proxy/https%3A%2F%2Fapi.example.com%2Fpath
+ * 生产模式下直接返回原 URL（纯静态部署无代理）。
+ */
+const proxyUrl = (url: string): string => {
+  if (import.meta.env.DEV && url.startsWith('http')) {
+    return `/cors-proxy/${encodeURIComponent(url)}`;
+  }
+  return url;
+};
+
 /** 清理 base64 前缀 */
 export const cleanBase64 = (b64: string): string => {
   return b64.replace(/^data:image\/\w+;base64,/, '');
@@ -189,7 +201,7 @@ export function readFilesAsDataUrls(files: File[]): Promise<string[]> {
 export const urlToBase64 = async (url: string, signal?: AbortSignal): Promise<string> => {
   try {
     throwIfAborted(signal);
-    const response = await fetch(url, { signal });
+    const response = await fetch(proxyUrl(url), { signal });
     const blob = await response.blob();
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -343,7 +355,7 @@ export const fetchWithTimeout = async (
   throwIfAborted(signal);
   const { signal: timedSignal, cleanup, didTimeout } = createTimeoutSignal(signal, timeoutMs ?? REQUEST_TIMEOUT_MS);
   try {
-    const response = await fetch(url, { ...init, signal: timedSignal });
+    const response = await fetch(proxyUrl(url), { ...init, signal: timedSignal });
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`API error ${response.status}: ${errorText}`);
