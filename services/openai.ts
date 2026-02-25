@@ -27,6 +27,7 @@ import { parseModelNameForImageParams } from '../utils/modelNameParams';
 /** 从文本中提取图像 data URL/链接 */
 const extractImageFromText = (text: string): string | null => {
   if (!text) return null;
+  const trimmed = text.trim();
 
   // 1) 直接 data URL（或包含在文本中的 data URL）
   const dataUrlMatch = text.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/);
@@ -44,10 +45,181 @@ const extractImageFromText = (text: string): string | null => {
   const urlMatch = text.match(/https?:\/\/[^\s)]+\.(?:png|jpe?g|gif|webp)(?:\?[^\s)]*)?/i);
   if (urlMatch) return urlMatch[0];
 
-  // 4) 纯 base64（没有前缀）
-  if (text.match(/^[A-Za-z0-9+/=]{1000,}$/)) return text;
+  // 5) 纯 URL（无扩展名，也视为候选；常见于签名下载链接）
+  if (/^https?:\/\/[^\s)]+$/i.test(trimmed)) return trimmed;
+
+  // 6) 纯 base64（没有前缀）
+  if (trimmed.match(/^[A-Za-z0-9+/=]{1000,}$/)) return trimmed;
 
   return null;
+};
+
+const toDataUrl = (base64: string, mimeType = 'image/png'): string =>
+  `data:${mimeType};base64,${base64}`;
+
+/**
+ * 从任意嵌套 JSON 中提取图片（兼容不同中转商返回形态）
+ * 支持：
+ * - OpenAI: image_url.url / b64_json / delta.image
+ * - Gemini: inlineData.data / fileData.fileUri
+ * - text/markdown 中内嵌 URL 或 data URL
+ */
+const extractImageFromUnknown = (value: unknown, depth = 0): string | null => {
+  if (value == null || depth > 6) return null;
+
+  if (typeof value === 'string') {
+    return extractImageFromText(value);
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const extracted = extractImageFromUnknown(item, depth + 1);
+      if (extracted) return extracted;
+    }
+    return null;
+  }
+
+  if (typeof value !== 'object') return null;
+  const obj = value as Record<string, unknown>;
+
+  const imageUrlField = obj.image_url;
+  if (typeof imageUrlField === 'string') {
+    const extracted = extractImageFromText(imageUrlField);
+    if (extracted) return extracted;
+  } else if (imageUrlField && typeof imageUrlField === 'object') {
+    const extracted = extractImageFromUnknown(imageUrlField, depth + 1);
+    if (extracted) return extracted;
+  }
+
+  const directUrlKeys = ['url', 'fileUri', 'file_url', 'imageUrl', 'image_uri'];
+  for (const key of directUrlKeys) {
+    const raw = obj[key];
+    if (typeof raw === 'string') {
+      const extracted = extractImageFromText(raw);
+      if (extracted) return extracted;
+    }
+  }
+
+  const mimeType =
+    (typeof obj.mimeType === 'string' && obj.mimeType.trim()) ||
+    (typeof obj.mime_type === 'string' && obj.mime_type.trim()) ||
+    'image/png';
+
+  const base64Keys = ['b64_json', 'base64', 'image', 'data'];
+  for (const key of base64Keys) {
+    const raw = obj[key];
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('data:image/')) return trimmed;
+    if (/^[A-Za-z0-9+/=]{1000,}$/.test(trimmed)) return toDataUrl(trimmed, mimeType);
+  }
+
+  const textKeys = ['text', 'content', 'message', 'delta'];
+  for (const key of textKeys) {
+    const raw = obj[key];
+    if (typeof raw === 'string') {
+      const extracted = extractImageFromText(raw);
+      if (extracted) return extracted;
+    }
+  }
+
+  const nestedKeys = [
+    'inlineData',
+    'fileData',
+    'content',
+    'parts',
+    'message',
+    'delta',
+    'choices',
+    'response',
+    'result',
+    'output',
+    'data',
+  ];
+  for (const key of nestedKeys) {
+    const nested = obj[key];
+    if (nested == null) continue;
+    const extracted = extractImageFromUnknown(nested, depth + 1);
+    if (extracted) return extracted;
+  }
+
+  return null;
+};
+
+/** 从任意嵌套内容里收集文本（用于流式拼接 / 调试） */
+const collectTextFromUnknown = (value: unknown, depth = 0): string => {
+  if (value == null || depth > 6) return '';
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map((item) => collectTextFromUnknown(item, depth + 1)).join('');
+  if (typeof value !== 'object') return '';
+
+  const obj = value as Record<string, unknown>;
+  let out = '';
+  const keys = ['text', 'content', 'message', 'delta', 'parts'];
+  for (const key of keys) {
+    const raw = obj[key];
+    if (raw == null) continue;
+    if (typeof raw === 'string') {
+      out += raw;
+    } else if (Array.isArray(raw) || typeof raw === 'object') {
+      out += collectTextFromUnknown(raw, depth + 1);
+    }
+  }
+  return out;
+};
+
+/** 截断 JSON 日志，避免刷爆控制台 */
+const previewJson = (value: unknown, maxLen = 1800): string => {
+  try {
+    const s = JSON.stringify(value);
+    return s.length > maxLen ? `${s.slice(0, maxLen)}...(truncated)` : s;
+  } catch {
+    return String(value);
+  }
+};
+
+/** 部分中转会以 200 返回 { error: ... }，这里统一抽取错误信息 */
+const extractProviderErrorMessage = (payload: unknown): string | null => {
+  if (!payload || typeof payload !== 'object') return null;
+  const obj = payload as Record<string, unknown>;
+
+  const err = obj.error;
+  if (typeof err === 'string' && err.trim()) return err.trim();
+  if (err && typeof err === 'object') {
+    const errorObj = err as Record<string, unknown>;
+    const message = typeof errorObj.message === 'string' ? errorObj.message.trim() : '';
+    const code = typeof errorObj.code === 'string' ? errorObj.code.trim() : '';
+    if (message) return code ? `${message} (code: ${code})` : message;
+  }
+
+  // 兼容少数提供方：顶层 message/code 直接表示失败
+  if (!obj.choices && !obj.data && typeof obj.message === 'string' && obj.message.trim()) {
+    const code = typeof obj.code === 'string' ? obj.code.trim() : '';
+    return code ? `${obj.message.trim()} (code: ${code})` : obj.message.trim();
+  }
+
+  return null;
+};
+
+/** 风控/权限类错误提示（避免用户看到过多上游细节） */
+const normalizeProviderErrorMessage = (message: string): string => {
+  const trimmed = (message || '').trim();
+  if (!trimmed) return '未知错误';
+  if (trimmed.includes('上游通道风控/权限异常')) return trimmed;
+
+  const riskOrPermissionPattern =
+    /recaptcha|generation_failed|permission\s*denied|forbidden|unauthorized|access\s*denied|not\s+enabled|invalid\s*api\s*key/i;
+  if (riskOrPermissionPattern.test(trimmed)) {
+    return `上游通道风控/权限异常：${trimmed}`;
+  }
+  return trimmed;
+};
+
+/** 命中明确上游风控失败时，停止多策略重试，避免无效请求 */
+const shouldStopGeminiStrategyRetry = (error: unknown): boolean => {
+  const msg = error instanceof Error ? error.message : String(error);
+  return /recaptcha|generation_failed/i.test(msg);
 };
 
 /** OpenAI 兼容设置 */
@@ -79,6 +251,18 @@ const buildMessageContent = (params: GenerationParams): OpenAIContentPart[] => {
   }
 
   return content;
+};
+
+/**
+ * OpenAI 兼容 message.content：
+ * - 纯文生图用 string（与多数 newapi 文档一致）
+ * - 图生图/多图参考用 content parts（OpenAI 多模态格式）
+ */
+const buildOpenAIUserContent = (params: GenerationParams): string | OpenAIContentPart[] => {
+  if (params.referenceImages && params.referenceImages.length > 0) {
+    return buildMessageContent(params);
+  }
+  return params.prompt;
 };
 
 
@@ -455,6 +639,11 @@ const callGeminiRelayAPI = async (
   const result = (await response.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string }; text?: string }> } }>;
   };
+  const relayError = extractProviderErrorMessage(result);
+  if (relayError) {
+    debugLog('Gemini Relay Response:', JSON.stringify(result, null, 2));
+    throw new Error(normalizeProviderErrorMessage(relayError));
+  }
   const image = extractGeminiImageFromResponse(result, params);
   if (image) return finalizeImage(image, signal);
 
@@ -465,14 +654,18 @@ const callGeminiRelayAPI = async (
 const callGeminiChatRelayAPI = async (
   params: GenerationParams,
   settings: OpenAISettings,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  options?: { stream?: boolean; minimalBody?: boolean }
 ): Promise<OpenAIResponse> => {
   const url = joinUrl(settings.baseUrl, '/v1/chat/completions');
+  const stream = options?.stream ?? true;
+  const minimalBody = options?.minimalBody ?? false;
   const contents = buildGeminiContents(params);
   const imageConfig = buildGeminiImageConfig(params);
+  const userContent = buildOpenAIUserContent(params);
   // messages 使用标准 OpenAI 格式（包含 image_url），确保代理能正确接收参考图
   // contents 使用 Gemini 原生格式，供支持 Gemini 协议的代理使用
-  const messageContent = buildMessageContent(params);
+  const messageContent = userContent;
   // 映射 imageSize 为 OpenAI 兼容的像素尺寸（如 1K + 3:4 → 1024x1536）
   const mappedSize = imageConfig.imageSize
     ? mapOpenAIImageSize(imageConfig.imageSize, imageConfig.aspectRatio)
@@ -483,23 +676,29 @@ const callGeminiChatRelayAPI = async (
     responseModalities: ['IMAGE'],
     imageConfig,
   };
-  const body: Record<string, unknown> = {
-    model: params.model,
-    stream: true,
-    max_tokens: 8192,
-    messages: [{ role: 'user', content: messageContent }],
-    contents,
-    // 顶层 generationConfig：大多数 Gemini 中转会读取此字段
-    generationConfig,
-    // 顶层 OpenAI 风格字段：部分中转通过 aspect_ratio / size / quality 传递参数
-    ...(imageConfig.aspectRatio && { aspect_ratio: imageConfig.aspectRatio }),
-    ...(mappedSize && { size: mappedSize }),
-    ...(mappedQuality && { quality: mappedQuality }),
-    ...(imageConfig.imageSize && { imageSize: imageConfig.imageSize }), // Antigravity v4.1.14+: highest priority
-    ...(imageConfig.personGeneration && { person_generation: imageConfig.personGeneration }),
-    // extra_body：兼容使用 OpenAI Python SDK 的中转
-    extra_body: { generationConfig },
-  };
+  const body: Record<string, unknown> = minimalBody
+    ? {
+      model: params.model,
+      stream,
+      messages: [{ role: 'user', content: messageContent }],
+    }
+    : {
+      model: params.model,
+      stream,
+      max_tokens: 8192,
+      messages: [{ role: 'user', content: messageContent }],
+      contents,
+      // 顶层 generationConfig：大多数 Gemini 中转会读取此字段
+      generationConfig,
+      // 顶层 OpenAI 风格字段：部分中转通过 aspect_ratio / size / quality 传递参数
+      ...(imageConfig.aspectRatio && { aspect_ratio: imageConfig.aspectRatio }),
+      ...(mappedSize && { size: mappedSize }),
+      ...(mappedQuality && { quality: mappedQuality }),
+      ...(imageConfig.imageSize && { imageSize: imageConfig.imageSize }), // Antigravity v4.1.14+: highest priority
+      ...(imageConfig.personGeneration && { person_generation: imageConfig.personGeneration }),
+      // extra_body：兼容使用 OpenAI Python SDK 的中转
+      extra_body: { generationConfig },
+    };
 
   debugLog('Gemini Chat Relay URL:', url);
   debugLog('Gemini Chat Relay body:', JSON.stringify(body, null, 2));
@@ -520,7 +719,12 @@ const callGeminiChatRelayAPI = async (
 
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
-    return (await response.json()) as OpenAIResponse;
+    const payload = (await response.json()) as unknown;
+    const providerError = extractProviderErrorMessage(payload);
+    if (providerError) {
+      throw new Error(normalizeProviderErrorMessage(providerError));
+    }
+    return payload as OpenAIResponse;
   }
 
   return parseStreamResponse(response, signal);
@@ -531,15 +735,53 @@ const requestGeminiChatImage = async (
   settings: OpenAISettings,
   signal?: AbortSignal
 ): Promise<GeneratedImage> => {
-  const result = await callGeminiChatRelayAPI(params, settings, signal);
-  const image = extractImageFromResponse(result, params);
-  if (image) {
-    return finalizeImage(image, signal);
+  const strategies: Array<{ stream: boolean; minimalBody: boolean; label: string }> = [
+    { stream: false, minimalBody: true, label: 'json-minimal-body' },
+    { stream: true, minimalBody: true, label: 'stream-minimal-body' },
+    { stream: false, minimalBody: false, label: 'json-rich-body' },
+    { stream: true, minimalBody: false, label: 'stream-rich-body' },
+  ];
+
+  let lastResult: OpenAIResponse | null = null;
+  let lastError: unknown = null;
+
+  for (const s of strategies) {
+    if (signal?.aborted) throw createAbortError();
+    try {
+      const result = await callGeminiChatRelayAPI(params, settings, signal, {
+        stream: s.stream,
+        minimalBody: s.minimalBody,
+      });
+      lastResult = result;
+      const image = extractImageFromResponse(result, params);
+      if (image) {
+        return finalizeImage(image, signal);
+      }
+      debugLog(
+        `Gemini chat relay strategy "${s.label}" raw result preview:`,
+        previewJson(result)
+      );
+      debugLog(`Gemini chat relay strategy "${s.label}" returned without image.`);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      const message = normalizeProviderErrorMessage(error instanceof Error ? error.message : String(error));
+      const normalizedError = error instanceof Error && error.message === message ? error : new Error(message);
+      lastError = normalizedError;
+      debugLog(`Gemini chat relay strategy "${s.label}" failed:`, normalizedError);
+      if (shouldStopGeminiStrategyRetry(normalizedError)) {
+        throw normalizedError;
+      }
+    }
   }
 
-  const responseContent = result.choices?.[0]?.message?.content;
-  if (responseContent && typeof responseContent === 'string' && responseContent.length > 0) {
-    throw new Error(`Gemini chat relay returned text: ${responseContent.substring(0, 120)}`);
+  const responseContent = lastResult?.choices?.[0]?.message?.content;
+  const responseText = collectTextFromUnknown(responseContent).trim();
+  if (responseText) {
+    throw new Error(`Gemini chat relay returned text: ${responseText.substring(0, 200)}`);
+  }
+
+  if (lastError instanceof Error && lastError.message) {
+    throw new Error(`No image in Gemini chat relay response. Last error: ${lastError.message}`);
   }
 
   throw new Error('No image in Gemini chat relay response. Check browser console.');
@@ -556,11 +798,30 @@ const parseStreamResponse = async (response: Response, signal?: AbortSignal): Pr
   let imageData: string | null = null;
   let streamError: string | null = null;
 
+  const consumeUnknownChunk = (chunk: unknown) => {
+    if (chunk == null) return;
+    const extracted = extractImageFromUnknown(chunk);
+    if (extracted) {
+      imageData = extracted;
+      return;
+    }
+    const text = collectTextFromUnknown(chunk);
+    if (text) {
+      const extractedFromText = extractImageFromText(text);
+      if (extractedFromText) imageData = extractedFromText;
+      else fullContent += text;
+    }
+  };
+
   const processEventData = (data: string) => {
     if (!data || data === '[DONE]') return;
 
     try {
-      const parsed = JSON.parse(data) as { choices?: OpenAIChoice[]; error?: { message?: string } };
+      const parsed = JSON.parse(data) as {
+        choices?: OpenAIChoice[];
+        error?: { message?: string };
+        [key: string]: unknown;
+      };
       if (parsed.error?.message) {
         streamError = parsed.error.message;
         return;
@@ -568,26 +829,14 @@ const parseStreamResponse = async (response: Response, signal?: AbortSignal): Pr
       const choice = parsed.choices?.[0];
       const delta = choice?.delta;
 
-      if (delta?.content) {
-        const extracted = extractImageFromText(delta.content);
-        if (extracted) {
-          imageData = extracted;
-        } else {
-          fullContent += delta.content;
-        }
-      }
-
-      if (delta?.image_url?.url) imageData = delta.image_url.url;
-      if (delta?.image) imageData = delta.image;
+      consumeUnknownChunk(delta?.content);
+      consumeUnknownChunk(delta?.image_url);
+      consumeUnknownChunk(delta?.image);
 
       const finishReason = choice?.finish_reason;
       // 兼容“非流式 JSON”直接返回 message.content 的情况
       const msgContent = choice?.message?.content;
-      if (typeof msgContent === 'string' && msgContent) {
-        const extracted = extractImageFromText(msgContent);
-        if (extracted) imageData = extracted;
-        else fullContent += msgContent;
-      }
+      consumeUnknownChunk(msgContent);
 
       if (finishReason === 'stop') {
         const finalMsg = choice?.message;
@@ -598,6 +847,11 @@ const parseStreamResponse = async (response: Response, signal?: AbortSignal): Pr
           const extractedFromText = extractImageFromText(fullContent);
           if (extractedFromText) imageData = extractedFromText;
         }
+      }
+
+      // 兜底：部分中转不会返回 choices，而是返回 event/object 结构
+      if (!choice) {
+        consumeUnknownChunk(parsed);
       }
     } catch {
       // 跳过非 JSON
@@ -667,7 +921,14 @@ const parseStreamResponse = async (response: Response, signal?: AbortSignal): Pr
 
   if (streamError) throw new Error(`API stream error: ${streamError}`);
 
-  debugLog('Stream completed. Image found:', !!imageData);
+  debugLog(
+    'Stream completed. Image found:',
+    !!imageData,
+    '| text length:',
+    fullContent.length,
+    '| preview:',
+    fullContent.slice(0, 120)
+  );
 
   return {
     choices: [
@@ -820,9 +1081,15 @@ const requestImageResponse = async (
 
 /** 从消息中提取图像 */
 const extractImageFromMessage = (message?: OpenAIMessage): string | null => {
-  if (!message?.content) return null;
+  if (!message) return null;
+  const extractedFromMessageObject = extractImageFromUnknown(message as unknown);
+  if (extractedFromMessageObject) return extractedFromMessageObject;
+
+  if (!message.content) return null;
 
   const content = message.content;
+  const extractedFromUnknown = extractImageFromUnknown(content);
+  if (extractedFromUnknown) return extractedFromUnknown;
 
   if (Array.isArray(content)) {
     for (const part of content) {
@@ -852,7 +1119,22 @@ const extractImageFromResponse = (
     return createGeneratedImage(result._imageData, params);
   }
 
+  // 1.2 顶层常见输出字段（部分中转不走 choices）
+  const resultObj = result as unknown as Record<string, unknown>;
+  for (const key of ['image', 'images', 'output', 'result', 'response']) {
+    const value = resultObj[key];
+    if (value == null) continue;
+    const extracted = extractImageFromUnknown(value);
+    if (extracted) return createGeneratedImage(extracted, params, extracted.startsWith('http'));
+  }
+
   const messageContent = result.choices?.[0]?.message?.content;
+
+  // 1.5 通用提取（兼容 array/object/新字段）
+  const genericExtracted = extractImageFromUnknown(messageContent);
+  if (genericExtracted) {
+    return createGeneratedImage(genericExtracted, params, genericExtracted.startsWith('http'));
+  }
 
   // 2. 数组格式内容
   if (Array.isArray(messageContent)) {
@@ -896,15 +1178,22 @@ const extractImageFromResponse = (
       return createGeneratedImage(markdownMatch[1], params, true);
     }
 
-    // 纯 URL
-    const urlMatch = messageContent.match(/^(https?:\/\/[^\s]+\.(jpg|jpeg|png|gif|webp))/i);
-    if (urlMatch) {
-      return createGeneratedImage(urlMatch[1], params, true);
-    }
+    const extracted = extractImageFromText(messageContent);
+    if (extracted) return createGeneratedImage(extracted, params, extracted.startsWith('http'));
 
     // 原始 base64
     if (messageContent.match(/^[A-Za-z0-9+/=]{1000,}$/)) {
       return createGeneratedImage(`data:image/png;base64,${messageContent}`, params);
+    }
+  }
+
+  // 5. choices / delta 兼容提取
+  if (Array.isArray(result.choices)) {
+    for (const c of result.choices) {
+      const fromMessage = extractImageFromMessage(c.message);
+      if (fromMessage) return createGeneratedImage(fromMessage, params, fromMessage.startsWith('http'));
+      const fromDelta = extractImageFromUnknown(c.delta);
+      if (fromDelta) return createGeneratedImage(fromDelta, params, fromDelta.startsWith('http'));
     }
   }
 

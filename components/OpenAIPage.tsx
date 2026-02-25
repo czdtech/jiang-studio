@@ -119,6 +119,23 @@ const createDefaultProvider = (scope: ProviderScope): ProviderProfile => {
 
 const MAX_REF_IMAGES = 8;
 
+const toFriendlyGenerationError = (error: unknown): string => {
+  const message = (error instanceof Error ? error.message : String(error)).trim();
+  if (!message) return '未知错误';
+  if (message.includes('上游通道风控/权限异常')) return message;
+  if (/recaptcha|generation_failed|permission\s*denied|forbidden|unauthorized|access\s*denied|not\s+enabled|invalid\s*api\s*key/i.test(message)) {
+    return `上游通道风控/权限异常：${message}`;
+  }
+  return message;
+};
+
+const getFirstFailureError = (outcomes: Array<{ ok: boolean; error?: string }>): string | null => {
+  for (const outcome of outcomes) {
+    if (!outcome.ok && outcome.error) return outcome.error;
+  }
+  return null;
+};
+
 export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, variant = 'third_party' }: OpenAIPageProps) => {
   const { showToast } = useToast();
   const scope: ProviderScope = variant === 'antigravity_tools' ? 'antigravity_tools' : 'openai_proxy';
@@ -408,7 +425,8 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
         .map(o => ({ ...(o as { ok: true; image: GeneratedImage }).image, sourceScope: scope, sourceProviderId: activeProviderId }));
 
       if (successImages.length === 0) {
-        showToast('迭代生成失败', 'error');
+        const firstError = getFirstFailureError(outcomes);
+        showToast(firstError ? `迭代生成失败：${toFriendlyGenerationError(firstError)}` : '迭代生成失败', 'error');
         return;
       }
 
@@ -440,7 +458,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
       if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
       const aborted = (error as { name?: string })?.name === 'AbortError' || controller.signal.aborted;
       if (aborted) { showToast('已停止生成', 'info'); return; }
-      showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
+      showToast('生成错误：' + toFriendlyGenerationError(error), 'error');
     } finally {
       if (generationRunIdRef.current === runId) generateLockRef.current = false;
       if (!isMountedRef.current || generationRunIdRef.current !== runId) return;
@@ -764,10 +782,14 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
 
       const successCount = successImages.length;
       const failCount = currentParams.count - successCount;
+      const firstFailureError = getFirstFailureError(outcomes);
       if (controller.signal.aborted) {
         showToast(successCount > 0 ? `已停止生成（已生成 ${successCount} 张）` : '已停止生成', 'info');
       } else if (successCount === 0) {
-        showToast('生成失败（请查看失败卡片）', 'error');
+        showToast(
+          firstFailureError ? `生成失败：${toFriendlyGenerationError(firstFailureError)}` : '生成失败（请查看失败卡片）',
+          'error'
+        );
       } else if (failCount > 0) {
         showToast(`生成完成：成功 ${successCount} 张，失败 ${failCount} 张`, 'info');
       } else {
@@ -786,7 +808,7 @@ export const OpenAIPage = ({ saveImage, ensureGalleryDir, onImageClick, onEdit, 
         return;
       }
 
-      showToast('生成错误：' + (error instanceof Error ? error.message : '未知错误'), 'error');
+      showToast('生成错误：' + toFriendlyGenerationError(error), 'error');
     } finally {
       if (generationRunIdRef.current === runId) generateLockRef.current = false;
       if (!isMountedRef.current) return;
